@@ -1,0 +1,126 @@
+import assert from "node:assert/strict";
+import {mkdtempSync, readFileSync, writeFileSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {test} from "node:test";
+
+const tmp = mkdtempSync(join(tmpdir(), "goog-sync-test-"));
+process.env.GOOG_CACHE_DIR = join(tmp, "cache");
+process.env.GOOG_CONFIG_DIR = join(tmp, "config");
+const S = await import("../src/sync.ts");
+
+const ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc";
+const doc = (...lines: string[]) => `<!-- goog doc ${ID} · "T" -->\n\n${lines.join("\n")}\n`;
+
+test("resolveRef understands Google's URL shapes", () => {
+  const urls = [
+    `https://docs.google.com/document/d/${ID}/edit`,
+    `https://docs.google.com/document/d/${ID}/edit?tab=t.0`,
+    `https://docs.google.com/document/d/${ID}/edit?usp=sharing`,
+    `https://docs.google.com/document/u/1/d/${ID}/edit#heading=h.x`,
+    `docs.google.com/document/d/${ID}`,
+  ];
+  for (const u of urls) assert.deepEqual(S.resolveRef(u), {id: ID, kind: "doc"}, u);
+  // These don't say whether it's a doc or a deck; Drive is asked later.
+  const unsure = [
+    `https://docs.google.com/open?id=${ID}`,
+    `https://drive.google.com/open?id=${ID}&authuser=0`,
+    `https://drive.google.com/file/d/${ID}/view?usp=drive_link`,
+    ` ${ID} `,
+  ];
+  for (const u of unsure) assert.deepEqual(S.resolveRef(u), {id: ID}, u);
+  assert.equal(S.resolveRef(`https://docs.google.com/presentation/d/${ID}/edit`).kind, "slides");
+  assert.throws(() => S.resolveRef(`https://docs.google.com/document/d/e/2PACX-1vabc/pub`), /published/);
+  assert.throws(() => S.resolveRef(`https://docs.google.com/spreadsheets/d/${ID}/edit`), /Sheets/);
+  assert.throws(() => S.resolveRef(`https://example.com/document/d/${ID}`), /isn't a Google/);
+  assert.throws(() => S.resolveRef("nope.goog"), /doesn't exist/);
+  assert.throws(() => S.resolveRef("hello"), /isn't a doc id/);
+});
+
+test("resolveRef reads the header of a .goog file, BOM and CRLF included", () => {
+  const f = join(tmp, "bom.goog");
+  writeFileSync(f, "﻿" + doc("hi").replace(/\n/g, "\r\n"));
+  assert.deepEqual(S.resolveRef(f), {id: ID, kind: "doc", file: f});
+  const t = S.readText(f);
+  assert.equal(t.crlf, true);
+  assert.equal(t.text, doc("hi"));
+  writeFileSync(f, "no header\n");
+  assert.throws(() => S.resolveRef(f), /no goog header/);
+});
+
+test("writeText keeps CRLF and writes atomically", () => {
+  const f = join(tmp, "crlf.goog");
+  writeFileSync(f, "x");
+  const h = S.writeText(f, doc("a", "b"), true);
+  assert.equal(readFileSync(f, "utf8"), doc("a", "b").replace(/\n/g, "\r\n"));
+  assert.equal(h, S.readText(f).hash);
+});
+
+test("reconcile: who changed what", () => {
+  const base = doc("one", "two", "three");
+  assert.equal(S.reconcile(base, base, base).action, "none");
+  // Spacing and a missing trailing newline aren't changes.
+  assert.equal(S.reconcile(doc("one", "", "", "two", "three").trimEnd(), base, base).action, "none");
+  // Only the doc changed: pull.
+  const r1 = S.reconcile(base, base, doc("one", "TWO", "three"));
+  assert.equal(r1.action, "pull");
+  // Only the file changed: push the file.
+  const r2 = S.reconcile(doc("one", "two", "three", "four"), base, base);
+  assert.equal(r2.action, "push");
+  assert.ok(r2.action === "push" && !r2.merged && r2.text.endsWith("four\n"));
+  // Both changed different lines: merge.
+  const r3 = S.reconcile(doc("ONE", "two", "three"), base, doc("one", "two", "THREE"));
+  assert.ok(r3.action === "push" && r3.merged);
+  assert.equal(r3.action === "push" && S.bodyOf(r3.text), S.bodyOf(doc("ONE", "two", "THREE")));
+  // Both made the same change: nothing to push, just take the doc.
+  assert.equal(S.reconcile(doc("one", "2", "three"), base, doc("one", "2", "three")).action, "none");
+  // Same line, different changes: conflict.
+  const r4 = S.reconcile(doc("one", "mine", "three"), base, doc("one", "theirs", "three"));
+  assert.equal(r4.action, "conflict");
+  assert.match(r4.action === "conflict" ? r4.text : "", /<<<<<<< your file\nmine\n=======\ntheirs\n>>>>>>> google doc/);
+  // Neighbouring lines changed on each side: merged line by line, no conflict.
+  const r6 = S.reconcile(doc("ONE", "two", "three"), base, doc("one", "TWO", "three"));
+  assert.ok(r6.action === "push" && r6.merged);
+  assert.equal(r6.action === "push" && S.bodyOf(r6.text), S.bodyOf(doc("ONE", "TWO", "three")));
+  // ...and only the line both changed is marked.
+  const r7 = S.reconcile(doc("ONE", "mine", "three"), base, doc("one", "theirs", "THREE"));
+  assert.ok(r7.action === "conflict" && r7.conflicts === 1);
+  assert.match(r7.action === "conflict" ? r7.text : "", /^ONE\n<<<<<<< your file\nmine\n=======\ntheirs\n>>>>>>> google doc\nTHREE$/m);
+  // No base: the file wins.
+  const r5 = S.reconcile(doc("x"), null, base);
+  assert.ok(r5.action === "push" && r5.noBase);
+});
+
+test("a resolved conflict pushes instead of conflicting again", () => {
+  const base = doc("one", "two", "three");
+  const theirs = doc("one", "theirs", "three", "four");
+  const c = S.reconcile(doc("one", "mine", "three"), base, theirs);
+  assert.equal(c.action, "conflict");
+  // push() stores the doc as the new base when it writes markers.
+  const resolved = (c as any).text.replace(/<<<<<<< your file\n(.*)\n=======\n.*\n>>>>>>> google doc/, "$1 and theirs");
+  const r = S.reconcile(resolved, theirs, theirs);
+  assert.equal(r.action, "push");
+  assert.equal(r.action === "push" && S.bodyOf(r.text), S.bodyOf(doc("one", "mine and theirs", "three", "four")));
+  // Half resolved: parse refuses, pointing at the marker line.
+  assert.throws(() => S.reconcile((c as any).text, theirs, theirs), /line \d+: .*conflict markers/);
+});
+
+test("bases are per file, so a cat-ed copy doesn't inherit another file's history", () => {
+  const a = join(tmp, "a.goog");
+  const b = join(tmp, "b.goog");
+  writeFileSync(a, doc("a"));
+  writeFileSync(b, doc("a"));
+  S.writeBase(a, {id: ID, text: doc("old")});
+  assert.equal(S.readBase(a)?.text, doc("old"));
+  assert.equal(S.readBase(b), null);
+});
+
+test("state records and listing", () => {
+  const f = join(tmp, "s.goog");
+  S.setState(f, {status: "synced", id: ID, pid: process.pid, hash: "h"});
+  assert.equal(S.readState(f)?.status, "synced");
+  assert.ok(S.watcherOf(f));
+  assert.ok(S.listStates().some((s) => s.file === f));
+  S.setState(f, {status: "stopped", id: ID, pid: process.pid});
+  assert.equal(S.watcherOf(f), null);
+});
