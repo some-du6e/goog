@@ -134,8 +134,8 @@ placeholders.
 New shapes, tables, lines, images (`src="https://…"`), YouTube or Drive videos, and
 slides (`<slide layout="…">`, with `<shape placeholder="title">` filling the
 layout's boxes) are tags without an id. Pasting a slide block or an object's
-line a second time duplicates it. The API can't change a slide's layout or a
-shape's type. `goog help slides` has the details.
+line a second time duplicates it (except an `<object>`, such as a chart). The
+API can't change a slide's layout or a shape's type. `goog help slides` has the details.
 
 ## How it writes
 

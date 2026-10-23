@@ -105,7 +105,7 @@ export function authStatus(): string {
 // Its scopes need to include drive: goog finds files and their kind through
 // Drive, and drive covers the Docs and Slides APIs too.
 export function importAuthorizedUser(j: any): {client_id: string; client_secret: string} {
-  if (!j.client_id || !j.client_secret || !j.refresh_token) {
+  if (!j?.client_id || !j.client_secret || !j.refresh_token) {
     throw new Error("that file has no client_id, client_secret, and refresh_token; expected an authorized_user token.json");
   }
   writeJson(refreshPath, {refresh_token: j.refresh_token});

@@ -387,7 +387,8 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   const id = head.id;
   const base = readBase(file, id);
   if (base && base.id !== id) {
-    throw new SyncError(`${file} was synced with doc ${base.id}, but its first line now names doc ${id}. Put back <!-- goog doc ${base.id} -->, or run goog pull ${id} -o ${file} --force to make this file follow that doc.`);
+    const was = parseHeader(base.text)?.kind ?? head.kind;
+    throw new SyncError(`${file} was synced with ${was} ${base.id}, but its first line now names ${head.kind} ${id}. Put back <!-- goog ${was} ${base.id} -->, or run goog pull ${id} -o ${file} --force to make this file follow that doc.`);
   }
   const be = backends[head.kind];
   if (hasConflictMarkers(ours.text)) be.parse(ours.text); // throws a FormatError pointing at the marker

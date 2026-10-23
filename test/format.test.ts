@@ -72,6 +72,13 @@ test("invisible characters are written as entities and read back", () => {
   assert.equal(serialize(doc), H + "a&nbsp;b&#x200b;c‍d\n");
 });
 
+test("a numeric entity past the last code point is kept as written", () => {
+  const doc = parse(H + "a&#x110000;b\n");
+  const p = doc.blocks[0];
+  assert.ok(p.type === "para" && "text" in p.runs[0]);
+  assert.equal(p.runs[0].text, "a&#x110000;b");
+});
+
 test("list types: numbers are ordered, bullets and checklists aren't", () => {
   const doc = parse(H + `<li type="a">x</li>\n<li type="disc">x</li>\n<li type="check" start="1">x</li>\n<li type="★">x</li>\n<li type="1" start="4">x</li>\n`);
   const lists = doc.blocks.map((b) => (b.type === "para" ? b.list : undefined));

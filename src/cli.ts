@@ -188,7 +188,7 @@ Changing a deck
   comment at the top; its <shape placeholder="title"> or "body" fills the
   layout's boxes.
   Copy: paste a <slide> block or an object's line again, ids included; the
-  copy gets new ids on push.
+  copy gets new ids on push. An <object> can't be copied on its own.
   Order: move <slide> blocks to reorder slides, object lines to restack them.
   Can't: change a slide's layout or a shape's type, make <object>s.`;
 
@@ -242,6 +242,16 @@ async function cmdAuth(args: string[]) {
     }
     return;
   }
+  // The checks below test the new sign-in, which $GOOG_TOKEN would stand in for.
+  delete process.env.GOOG_TOKEN;
+  // A file that isn't JSON may be a token; JSON.parse's error would quote it.
+  const readJsonFile = (f: string) => {
+    try {
+      return JSON.parse(readFileSync(f, "utf8"));
+    } catch (e: any) {
+      throw new Error(e instanceof SyntaxError ? `${f} isn't a JSON file` : e.message);
+    }
+  };
   if (sub === "script") {
     if (!arg) {
       out(`1. Open https://script.new in the signed-in Chrome.
@@ -281,7 +291,7 @@ ${JSON.stringify(BROKER_MANIFEST, null, 2)}
     const cfg = loadConfig();
     const before = structuredClone(cfg);
     const restore = keepSignIn();
-    cfg.client = importAuthorizedUser(JSON.parse(readFileSync(arg, "utf8")));
+    cfg.client = importAuthorizedUser(readJsonFile(arg));
     saveConfig(cfg);
     out("saved; checking it works…");
     let me: any;
@@ -298,7 +308,7 @@ ${JSON.stringify(BROKER_MANIFEST, null, 2)}
   }
   if (sub === "client") {
     if (!arg) throw new Error("usage: goog auth client <client_secret.json>");
-    const j = JSON.parse(readFileSync(arg, "utf8"));
+    const j = readJsonFile(arg);
     const c = j.installed ?? j.web ?? j;
     const client = {client_id: c.client_id, client_secret: c.client_secret};
     await loginWithClient(client, async (url) => {

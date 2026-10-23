@@ -79,7 +79,7 @@ export async function edit(id: string, fileArg: string, opts: EditOptions) {
         state("stopped", undefined, `synced with doc ${synced.id}`);
         throw new Error(`${fileArg} is synced with doc ${synced.id}, not ${id}.
     goog edit ${id} -o ${fileArg} --pull   replace the file with ${id}, then sync
-    goog edit ${fileArg}   keep syncing ${synced.id}`);
+    or put back <!-- goog ${parseHeader(synced.text)?.kind ?? kind} ${synced.id} --> as its first line and run goog edit ${fileArg} to keep syncing ${synced.id}`);
       }
       lastHash = (await pull(id, file, {force: true, kind})).hash;
       log("↓", `replaced ${name} with the doc`);

@@ -250,8 +250,11 @@ export type Token =
 function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|#39);/gi, (m, e: string) => {
     const low = e.toLowerCase();
-    if (low.startsWith("#x")) return String.fromCodePoint(parseInt(low.slice(2), 16));
-    if (low.startsWith("#")) return String.fromCodePoint(parseInt(low.slice(1), 10));
+    if (low.startsWith("#")) {
+      // Past the last code point it isn't a character; keep it as written.
+      const n = low.startsWith("#x") ? parseInt(low.slice(2), 16) : parseInt(low.slice(1), 10);
+      return n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    }
     return ({amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0"} as Record<string, string>)[low] ?? m;
   });
 }
