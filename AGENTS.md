@@ -36,7 +36,8 @@ Done means `npm test` and `npm run typecheck` both pass.
 
 - test/sim.ts simulates the Docs API. Its header lists the Docs rules observed
   live. When you see a new one live, add it to the sim and to that list, so
-  the planner tests catch it offline.
+  the planner tests catch it offline. test/slides-sim.ts does the same for
+  Slides' structural requests (groups, copies, deletes, z-order).
 - `node test/plan-live.ts [regex]` runs test/plan-scenarios.ts against real
   docs. Live runs use up the shared per-minute write quota, so reuse one doc
   for ad-hoc probes.
@@ -72,9 +73,14 @@ Observed live; the code depends on each:
 - New shapes get a thin dark outline and a theme fill; the planner removes
   both on the next pass unless the file asks for them.
 - A text's API length excludes its final newline, which can't be deleted.
-- `ungroupObjects` keeps the children's ids and positions, and only takes
-  top-level groups; `groupObjects` needs at least two top-level children, and can't take
-  tables, videos or placeholders.
+- Groups (test/slides-sim.ts models these): `ungroupObjects` keeps the
+  children's ids and positions, and only takes top-level groups;
+  `groupObjects` needs at least two top-level children, and can't take
+  tables, videos or placeholders (picture placeholders included). No request
+  adds to or takes from an existing group, so the planner ungroups a changed
+  top-level group and groups it again under the same id next pass. Deleting a
+  group's members down to one dissolves the group. A copy of an object in a
+  group lands at the top level, in front.
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.

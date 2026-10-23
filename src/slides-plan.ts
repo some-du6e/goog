@@ -117,100 +117,136 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
   });
 
   // ---------- objects on each slide ----------
+  // A slide's objects go in two steps: match the file's objects to the deck's
+  // (kept, copied or new), then decide what happens to each group, since that
+  // depends on where all of a group's members ended up.
   for (const s of want.slides) {
     if (pending.has(s)) continue;
     const rs = rslides.get(s.id!)!;
     const reqs: any[] = [];
     const creating: any[] = [];
-    const kept: {e: El; r: RElement}[] = [];
-    let busy = false; // objects were added: z-order waits for the next pass
+    const grouping: any[] = [];
+    let busy = false; // objects were added, copied, grouped or ungrouped: z-order waits for the next pass
 
-    const walk = (els: El[]) => {
-      for (const e of els) {
+    interface Node {e: El; r?: RElement; kids: Node[]}
+    const kept: Node[] = [];
+    const match = (els: El[]): Node[] =>
+      els.map((e) => {
         const r = e.id ? remote.els.get(e.id) : undefined;
         if (r && r.slide === s.id && !claimedEls.has(r.id)) {
           claimedEls.add(r.id);
-          kept.push({e, r});
-          if (e.kind === "group") walk(e.children);
-          continue;
+          const n = {e, r, kids: e.kind === "group" ? match(e.children) : []};
+          kept.push(n);
+          return n;
         }
-        busy = true;
         if (r && r.slide === s.id) {
-          // A second copy on the same slide.
+          // A second copy on the same slide. Slides puts a copy at the top
+          // level, even of an object inside a group.
+          const inside = new Set(subtree(remote, r.id));
           const ids: Record<string, string> = {};
           const remap = (x: El) => {
-            if (x.id && remote.els.has(x.id) && !Object.hasOwn(ids, x.id)) ids[x.id] = x.id = newId();
+            if (x.id && inside.has(x.id) && !Object.hasOwn(ids, x.id)) ids[x.id] = x.id = newId();
             else renew(x);
             if (x.kind === "group") x.children.forEach(remap);
           };
           const src = e.id!;
           remap(e);
           creating.push({duplicateObject: {objectId: src, objectIds: ids}});
-          continue;
+          busy = true;
+          return {e, kids: []};
         }
         if (e.kind === "group") {
-          // Only the group is new: its children keep their ids, so ones that
+          // Only the group is new: its members keep their ids, so ones that
           // already exist are grouped rather than made again.
           if (!e.id || remote.els.has(e.id) || !VALID_ID.test(e.id)) e.id = newId();
-          // Slides can't group these; they stay ungrouped.
-          if (e.children.some((c) => c.kind === "table" || c.kind === "video" || (c.kind === "shape" && c.placeholder))) {
-            warn(`a <group> can't hold tables, videos or layout placeholders in Slides, so slide ${s.id}'s new group wasn't made`);
-            walk(e.children);
-            continue;
-          }
-          if (e.children.length < 2) {
-            warn(`a <group> needs at least two objects; slide ${s.id}'s new group wasn't made`);
-            walk(e.children);
-            continue;
-          }
-          // Children claimed already (a pasted copy) are copied by walk first.
-          const ready = e.children.every((c) => c.id && remote.els.get(c.id)?.slide === s.id && !remote.els.get(c.id)?.group && !claimedEls.has(c.id));
-          if (ready) {
-            creating.push({groupObjects: {groupObjectId: e.id, childrenObjectIds: e.children.map((c) => c.id)}});
-            // Whatever is inside a child that's a group goes into the new one
-            // with it; it's diffed next pass.
-            const claim = (id: string) => {
-              claimedEls.add(id);
-              for (const r of remote.els.values()) if (r.group === id) claim(r.id);
-            };
-            for (const c of e.children) claim(c.id!);
-            busy = true;
-          } else walk(e.children);
-          continue;
+          return {e, kids: match(e.children)};
         }
         renew(e);
-        creating.push(...create(e, s.id!, warn));
-      }
-    };
-    walk(s.elements);
+        const made = create(e, s.id!, warn);
+        if (made.length) busy = true;
+        creating.push(...made);
+        return {e, kids: []};
+      });
+    const tree = match(s.elements);
+
+    // Slides can't add an object to a group or take one out, so a top-level
+    // group whose members changed is ungrouped, and made again from the file
+    // next pass.
+    const ungrouped = new Set<string>();
+    // Inside a group that's ungrouped this pass: it's top-level next pass.
+    const freed = (r: RElement): boolean => !!r.group && (ungrouped.has(r.group) || freed(remote.els.get(r.group)!));
+    const changed = kept.filter(({e, r, kids}) => {
+      if (e.kind !== "group" || !r?.raw.elementGroup) return false;
+      const have: string[] = (r.raw.elementGroup.children ?? []).map((c: any) => c.objectId);
+      const mine = kids.map((k) => k.e.id!);
+      return mine.some((id) => !have.includes(id)) || have.some((id) => claimedEls.has(id) && !mine.includes(id));
+    });
+    for (const {r} of changed) {
+      if (r!.group) continue;
+      ungrouped.add(r!.id);
+      reqs.push({ungroupObjects: {objectIds: [r!.id]}});
+    }
+    for (const {r} of changed) {
+      if (r!.group && !freed(r!)) warn(`the group ${r!.id} is inside another group, and Slides can only change what's in a top-level group; it was left as it is`);
+    }
 
     // A group the file dropped but kept some of the children of is ungrouped,
     // not deleted (that would take the children with it). Its children are
     // diffed, and the ones the file dropped deleted, next pass, once they're
     // top-level.
     const keepsChild = (id: string): boolean => [...remote.els.values()].some((c) => c.group === id && (claimedEls.has(c.id) || keepsChild(c.id)));
-    const ungrouped = new Set<string>();
     for (const [id, r] of remote.els) {
       if (r.slide !== s.id || claimedEls.has(id)) continue;
       if (r.group && !claimedEls.has(r.group)) continue; // goes with (or waits for) its group
       if (r.raw.elementGroup && keepsChild(id)) {
         // Slides only ungroups top-level groups.
         if (r.group) {
-          warn(`the group ${id} is inside another group, and Slides can only ungroup top-level groups; it was left as it is`);
+          if (!freed(r)) warn(`the group ${id} is inside another group, and Slides can only ungroup top-level groups; it was left as it is`);
           continue;
         }
         ungrouped.add(id);
-        reqs.unshift({ungroupObjects: {objectIds: [id]}});
+        reqs.push({ungroupObjects: {objectIds: [id]}});
       } else reqs.push({deleteObject: {objectId: id}});
     }
+    // Slides dissolves a group left with one member; treat it as ungrouped.
     for (const {e, r} of kept) {
-      if (r.group && ungrouped.has(r.group)) busy = true;
-      else reqs.push(...diffEl(e, r, warn));
+      if (e.kind !== "group" || !r?.raw.elementGroup || ungrouped.has(r.id)) continue;
+      if ((r.raw.elementGroup.children ?? []).filter((c: any) => claimedEls.has(c.objectId)).length < 2) ungrouped.add(r.id);
+    }
+    if (ungrouped.size) busy = true;
+
+    // New groups. One is made once all its members exist at the top level;
+    // until then they're made, copied or ungrouped above.
+    const moving = new Set<string>(); // going into a new group: diffed next pass
+    const visit = (nodes: Node[]) => {
+      for (const {e, r, kids} of nodes) {
+        visit(kids);
+        if (e.kind !== "group" || r) continue;
+        const bad = kids.some((k) => (k.r ? !groupable(k.r) : k.e.kind === "table" || k.e.kind === "video"));
+        if (bad) warn(`a <group> can't hold tables, videos or layout placeholders in Slides, so slide ${s.id}'s new group wasn't made`);
+        else if (kids.length < 2) warn(`a <group> needs at least two objects; slide ${s.id}'s new group wasn't made`);
+        else if (kids.some((k) => k.r?.group && !ungrouped.has(k.r.group))) {
+          warn(`a new <group> on slide ${s.id} holds objects that are inside another group in the deck, and Slides can't regroup those; it wasn't made`);
+        } else if (kids.every((k) => k.r && !ungrouped.has(k.r.id) && !k.r.group)) {
+          grouping.push({groupObjects: {groupObjectId: e.id, childrenObjectIds: kids.map((k) => k.r!.id)}});
+          for (const k of kids) for (const id of subtree(remote, k.r!.id)) moving.add(id);
+          busy = true;
+        }
+      }
+    };
+    visit(tree);
+
+    for (const {e, r} of kept) {
+      // Ungrouping and grouping move what's inside; it's diffed next pass.
+      if (moving.has(r!.id) || ungrouped.has(r!.id) || (r!.group && ungrouped.has(r!.group))) busy = true;
+      else reqs.push(...diffEl(e, r!, warn));
     }
 
     // z-order: file order is back to front.
     if (!busy) {
-      const top = s.elements.map((e) => e.id!).filter((id) => remote.els.get(id)?.slide === s.id && !remote.els.get(id)?.group);
+      // A new group that wasn't made leaves its members where they are.
+      const flat = (nodes: Node[]): string[] => nodes.flatMap((n) => (n.r ? (n.r.group ? [] : [n.r.id]) : n.e.kind === "group" ? flat(n.kids) : []));
+      const top = flat(tree);
       const now = (rs.raw.pageElements ?? []).map((e: any) => e.objectId).filter((id: string) => top.includes(id));
       const k = top.findIndex((id, i) => now[i] !== id);
       if (k >= 0) for (const id of top.slice(k)) reqs.push({updatePageElementsZOrder: {pageElementObjectIds: [id], operation: "BRING_TO_FRONT"}});
@@ -224,11 +260,22 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
 
     if (rs.notesId) reqs.push(...textOps({objectId: rs.notesId}, rs.notes, s.notes, warn));
     else if (paras(s.notes).length) warn(`slide ${s.id} has no speaker notes box, so its notes weren't written`);
-    elementReqs.push(...creating, ...reqs);
+    // Ungroups go first, so a deleted member is top-level by then.
+    elementReqs.push(...creating, ...reqs.filter((q) => q.ungroupObjects), ...reqs.filter((q) => !q.ungroupObjects), ...grouping);
   }
 
   return {requests: [...first, ...elementReqs, ...last], warnings};
 }
+
+// An object's id and the ids of everything inside it.
+function subtree(remote: RemoteDeck, id: string): string[] {
+  const out = [id];
+  for (const r of remote.els.values()) if (r.group === id) out.push(...subtree(remote, r.id));
+  return out;
+}
+
+// What groupObjects takes: Slides refuses tables, videos and placeholders.
+const groupable = (r: RElement) => !(r.raw.table || r.raw.video || r.raw.shape?.placeholder || r.raw.image?.placeholder);
 
 // Indexes (into xs) of a longest increasing subsequence of xs.
 function longestRun(xs: number[]): number[] {

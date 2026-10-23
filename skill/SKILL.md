@@ -46,4 +46,4 @@ Positions and sizes are points on a 720×405 slide. Pull also saves each slide
 as a picture (`<id>.files/slide-N.png`); look at those before moving
 anything, since where things sit is half the slide. Text inside a shape,
 table cell or `<notes>` uses the format above. `goog help slides` covers
-adding, copying and reordering.
+adding, copying, grouping and reordering.

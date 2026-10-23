@@ -177,6 +177,9 @@ Changing a deck
   or unskip a slide.
   Delete a line to delete the object or slide; delete a top-level <group> line
   and its </group> to ungroup what's inside.
+  Group: wrap two or more objects in <group>…</group>, or move objects into or
+  out of a top-level group. Groups can't hold tables, videos or layout
+  placeholders, and a group inside another group can't change.
   Add: a tag without an id. <shape> and <table> need nothing else;
   <image src="https://…"> needs a picture anyone can open; <video youtube="…">
   or <video drive="FILE_ID">;
