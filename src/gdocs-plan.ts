@@ -1349,7 +1349,7 @@ interface Unit {
   defaults: Record<string, Defaults>;
 }
 
-function units(remote: PlanRemote, target: Doc, warnings: string[], created: Created[]): {units: Unit[]; reqs: Req[]} {
+function units(remote: PlanRemote, target: Doc, warnings: string[]): {units: Unit[]; reqs: Req[]} {
   const out: Unit[] = [];
   const reqs: Req[] = [];
   const warn = (m: string) => warnings.includes(m) || warnings.push(m);
@@ -1367,23 +1367,7 @@ function units(remote: PlanRemote, target: Doc, warnings: string[], created: Cre
         out.push({ctx: {segmentId: s.id, ...tab}, seg: r.body, target: s.blocks, defaults: fn ? footnoteDefaults(defaults) : defaults, footnote: fn});
         continue;
       }
-      if (s.kind === "footnote" || s.id) {
-        warn(`the ${name(s.kind)} ${s.id} doesn't exist in the doc; it can't be created from the file${s.kind === "footnote" ? "" : " (leave out the id to add a new one)"}`);
-        continue;
-      }
-      if (s.attrs?.type) {
-        warn(`can't create a ${s.attrs.type}-page ${s.kind}; only the default one`);
-        continue;
-      }
-      if (have.some((x) => x.kind === s.kind && !x.attrs?.type)) {
-        warn(`the doc already has a ${s.kind}; edit that one instead of adding another`);
-        continue;
-      }
-      // Created now, filled next pass once it has an id.
-      const kind = s.kind === "header" ? "createHeader" : "createFooter";
-      const req: Req = {[kind]: {type: "DEFAULT", ...(tabId ? {sectionBreakLocation: {index: 0, tabId}} : {})}};
-      reqs.push(req);
-      created.push({req, apply: (reply) => (s.id = reply?.[kind]?.[s.kind === "header" ? "headerId" : "footerId"] ?? s.id)});
+      warn(`the ${name(s.kind)} ${s.id} doesn't exist in the doc; it can't be created from the file`);
     }
     for (const r of have) {
       if (want.some((s) => s.kind === r.kind && s.id === r.id)) continue;
@@ -1408,17 +1392,8 @@ function units(remote: PlanRemote, target: Doc, warnings: string[], created: Cre
   }
   function addTabs(tabs: NonNullable<Doc["tabs"]>) {
     for (const t of tabs) {
-      if (t.id && remote.tabs?.some((r) => r.id === t.id)) continue;
-      if (t.id) {
-        warn(`tab ${JSON.stringify(t.title)} (${t.id}) doesn't exist in the doc (leave out the id to add a new tab)`);
-        continue;
-      }
-      const props: Req = {title: t.title};
-      if (t.icon) props.iconEmoji = t.icon;
-      if (t.parent) props.parentTabId = t.parent;
-      const req: Req = {addDocumentTab: {tabProperties: props}};
-      reqs.push(req);
-      created.push({req, apply: (reply) => (t.id = reply?.addDocumentTab?.tabProperties?.tabId ?? t.id)});
+      if (remote.tabs?.some((r) => r.id === t.id)) continue;
+      warn(`tab ${JSON.stringify(t.title)} (${t.id}) doesn't exist in the doc; new tabs can't be created from the file`);
     }
   }
   addTabs(target.tabs);
@@ -1483,7 +1458,7 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
   const doc: Doc & {bodyOnly?: boolean} = Array.isArray(target) ? {kind: "doc", id: remote.doc.id, blocks: target, bodyOnly: true} : target;
   const warnings: string[] = [];
   const created: Created[] = [];
-  const {units: work, reqs: tabReqs} = units(remote, doc, warnings, created);
+  const {units: work, reqs: tabReqs} = units(remote, doc, warnings);
   if (checks(remote.doc) !== checks(doc) && checks(remote.doc).length === checks(doc).length) {
     warnings.push(CHECKS_WARNING);
   }
