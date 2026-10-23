@@ -13,7 +13,9 @@
 //   made up.
 // - created objects go in at the front.
 // - updatePageElementsZOrder only takes top-level objects.
-// - a new object's id (created, grouped or copied) can't be one in use.
+// - a new object's id (created, grouped or copied) can't be one in use on
+//   any page (slides, layouts, masters, notes) and must be 5-50 of
+//   [a-zA-Z0-9_-:], starting with a letter, digit or underscore.
 // Everything else (text, styles, transforms) is left alone; `settle` stops
 // once a pass plans none of the requests above.
 
@@ -55,7 +57,9 @@ let made = 0;
 export const STRUCTURAL = ["createShape", "createLine", "createImage", "createVideo", "duplicateObject", "deleteObject", "groupObjects", "ungroupObjects", "updatePageElementsZOrder"];
 
 function used(raw: any, id: string, k: string) {
-  if (find(raw, id) || raw.slides.some((s: any) => s.objectId === id)) reject(k, `The object ID (${id}) should be unique among all pages and page elements.`);
+  if (!/^[a-zA-Z0-9_][a-zA-Z0-9_\-:]{4,49}$/.test(id)) reject(k, `The object ID (${id}) is not valid.`);
+  const all = JSON.stringify([raw.slides, raw.layouts, raw.masters, raw.notesMaster]);
+  if (all.includes(`"objectId":${JSON.stringify(id)}`)) reject(k, `The object ID (${id}) should be unique among all pages and page elements.`);
 }
 
 export function apply(raw: any, requests: any[]) {

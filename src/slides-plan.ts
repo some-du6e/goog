@@ -265,7 +265,6 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
       const now = have.filter((id) => mineSet.has(id));
       return {moved, changed: moved.length > 0 || common.some((id, i) => now[i] !== id)};
     };
-    const depth = (r: RElement): number => (r.group ? 1 + depth(remote.els.get(r.group)!) : 0);
     const mine = bySlide.get(s.id!) ?? [];
     const staying = (id: string): boolean => claimedEls.has(id) || stuckObjects.has(id) || keepsChild(id);
     const keepsChild = (id: string): boolean => (kidsOf.get(id) ?? []).some((c) => staying(c.id));
@@ -278,7 +277,6 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     // A group the file dropped but kept some of the members of is ungrouped,
     // not deleted (that would take the members with it).
     for (const r of mine) if (!claimedEls.has(r.id) && r.raw.elementGroup && keepsChild(r.id)) groups.push({r});
-    groups.sort((a, b) => depth(a.r) - depth(b.r));
     // Every group starts out leaving, and each round decides every group from
     // the last round's fates; a group only stops leaving, so this settles on
     // the most that can be done (two groups swapping members both regroup).

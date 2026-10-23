@@ -80,9 +80,13 @@ Observed live; the code depends on each:
   adds to or takes from an existing group, so the planner ungroups a changed
   top-level group and groups it again under the same id next pass. Deleting a
   group's members down to one dissolves the group. A copy of an object in a
-  group lands at the top level, in front. Members keep their stacking order
+  group lands at the top level, in front, as do created objects. A new
+  group takes the place of its frontmost member. Members keep their stacking order
   whatever order groupObjects lists them in, and updatePageElementsZOrder
   refuses grouped objects, so the planner restacks members before grouping.
+- A new object's id must be unused across every page, layout, master and
+  notes page, and 5-50 characters of `[a-zA-Z0-9_\-:]` (`fresh` in
+  slides-plan.ts).
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.

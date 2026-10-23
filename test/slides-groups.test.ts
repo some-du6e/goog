@@ -249,3 +249,26 @@ test("groups: two groups swap members, and a nested pair losing one member disso
   r = settle(raw, file('<group id="qqqqq">', '<group id="ggggg">', lines(raw, "aaaaa"), "</group>", lines(raw, "bbbbb"), lines(raw, "eeeee"), "</group>"));
   assert.deepEqual(now(raw), [{qqqqq: ["aaaaa", "bbbbb", "eeeee"]}]);
 });
+
+test("groups: more changes a group can't take, and what's kept around them", () => {
+  // A new table inside a group: the group stays.
+  let raw: any = deck(group("ggggg", box("aaaaa"), box("bbbbb")));
+  let r = settle(raw, text(raw).replace("</group>", '<table x="1" y="1">\n<tr><td></td></tr>\n</table>\n</group>'));
+  assert.ok(!r.passes.flat().some((q) => q.ungroupObjects));
+  assert.match(r.warnings.join(), /ggggg can't change/);
+  // A pasted copy of a group that also holds another object makes a new
+  // group, and the other object isn't remade.
+  raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc"));
+  const g = text(raw).split("\n").slice(3, 7);
+  r = settle(raw, file(...g, ...g.slice(0, 3), lines(raw, "ccccc"), "</group>"));
+  assert.ok(!r.passes.flat().some((q) => q.deleteObject), JSON.stringify(r.passes));
+  assert.ok(JSON.stringify(shape(raw)).includes('"ccccc"'));
+  // A chart moved to another slide out of a group: no "can't make" warning,
+  // and the rest of the group still gets its edits.
+  raw = deck(group("ggggg", {objectId: "chart", transform: box("x").transform, size: box("x").size, sheetsChart: {spreadsheetId: "s", chartId: 1}}, box("aaaaa")));
+  raw.slides.push({objectId: "slide2", pageElements: []});
+  const t = text(raw);
+  const chart = lines(raw, "chart");
+  r = settle(raw, t.replace(chart + "\n", "").replace('<slide id="slide2">', `<slide id="slide2">\n${chart}`));
+  assert.doesNotMatch(r.warnings.join(), /can't make a new/);
+});
