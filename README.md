@@ -155,8 +155,7 @@ you fix them.
 `goog auth` sets up a token. Three options:
 
 - `goog auth import token.json`: reuse a refresh token another tool already
-  has (a google-auth `authorized_user` file). Its scopes need `drive`, or
-  `documents`/`presentations`.
+  has (a google-auth `authorized_user` file). Its scopes need `drive`.
 - `goog auth script`: an Apps Script web app in your own Drive returns an
   OAuth token, and goog calls it through your signed-in Chrome (CDP on
   `127.0.0.1:9223`). No Google Cloud project needed, which matters for school

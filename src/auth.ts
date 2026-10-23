@@ -5,6 +5,7 @@
 //     signed-in Chrome so it runs as you. No Cloud project needed.
 
 import {createHash, randomBytes} from "node:crypto";
+import {rmSync} from "node:fs";
 import {createServer} from "node:http";
 import {join} from "node:path";
 import {withBrowser} from "./browser.ts";
@@ -101,7 +102,8 @@ export function authStatus(): string {
 
 // Reuses a refresh token another tool already got, e.g. a google-auth
 // "authorized_user" token.json ({client_id, client_secret, refresh_token}).
-// Its scopes need to include drive or documents/presentations.
+// Its scopes need to include drive: goog finds files and their kind through
+// Drive, and drive covers the Docs and Slides APIs too.
 export function importAuthorizedUser(j: any): {client_id: string; client_secret: string} {
   if (!j.client_id || !j.client_secret || !j.refresh_token) {
     throw new Error("that file has no client_id, client_secret, and refresh_token; expected an authorized_user token.json");
@@ -109,6 +111,17 @@ export function importAuthorizedUser(j: any): {client_id: string; client_secret:
   writeJson(refreshPath, {refresh_token: j.refresh_token});
   forgetToken();
   return {client_id: j.client_id, client_secret: j.client_secret};
+}
+
+// Returns a function that puts back the refresh token saved now (or its
+// absence), for undoing a sign-in that doesn't work.
+export function keepSignIn(): () => void {
+  const saved = readJson<unknown>(refreshPath, null);
+  return () => {
+    if (saved) writeJson(refreshPath, saved);
+    else rmSync(refreshPath, {force: true});
+    forgetToken();
+  };
 }
 
 // Loopback OAuth flow for an installed-app client.

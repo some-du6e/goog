@@ -2,7 +2,7 @@ import {spawn} from "node:child_process";
 import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync} from "node:fs";
 import {basename, dirname, join, relative, resolve} from "node:path";
 import {parseArgs} from "node:util";
-import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, forgetToken, getToken, importAuthorizedUser, loginWithClient} from "./auth.ts";
+import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
@@ -279,11 +279,20 @@ ${JSON.stringify(BROKER_MANIFEST, null, 2)}
   if (sub === "import") {
     if (!arg) throw new Error("usage: goog auth import <token.json>");
     const cfg = loadConfig();
+    const before = structuredClone(cfg);
+    const restore = keepSignIn();
     cfg.client = importAuthorizedUser(JSON.parse(readFileSync(arg, "utf8")));
     saveConfig(cfg);
     out("saved; checking it works…");
-    await getToken();
-    const me = await api("GET", `${DRIVE}/about?fields=user(emailAddress)`);
+    let me: any;
+    try {
+      await getToken();
+      me = await api("GET", `${DRIVE}/about?fields=user(emailAddress)`);
+    } catch (e: any) {
+      saveConfig(before);
+      restore();
+      throw new Error(`${e.message}; went back to the previous sign-in`);
+    }
     out(`goog auth: OK, signed in as ${me.user.emailAddress}`);
     return;
   }

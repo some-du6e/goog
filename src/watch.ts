@@ -72,13 +72,23 @@ export async function edit(id: string, fileArg: string, opts: EditOptions) {
 
   // ---------- startup ----------
   let lastHash: string | undefined; // file content the current status is about
+  const synced = existsSync(file) ? readBase(file, id) : null;
   try {
-    if (!existsSync(file)) {
+    if (synced && synced.id !== id) {
+      if (opts.onExisting !== "pull") {
+        state("stopped", undefined, `synced with doc ${synced.id}`);
+        throw new Error(`${fileArg} is synced with doc ${synced.id}, not ${id}.
+    goog edit ${id} -o ${fileArg} --pull   replace the file with ${id}, then sync
+    goog edit ${fileArg}   keep syncing ${synced.id}`);
+      }
+      lastHash = (await pull(id, file, {force: true, kind})).hash;
+      log("↓", `replaced ${name} with the doc`);
+    } else if (!existsSync(file)) {
       state("pulling", undefined);
       lastHash = (await pull(id, file, {kind})).hash;
       log("↓", `pulled into ${file}`);
       state("synced", lastHash);
-    } else if (!readBase(file, id)) {
+    } else if (!synced) {
       const ft = readText(file);
       const remote = await be.fetch(id);
       const theirs = remote.text;
@@ -132,11 +142,12 @@ export async function edit(id: string, fileArg: string, opts: EditOptions) {
       return;
     }
     const head = parseHeader(ft.text);
-    if (head?.id !== id) {
+    if (head?.id !== id || head.kind !== kind) {
       lastHash = ft.hash;
+      const want = `<!-- goog ${kind} ${id} -->`;
       const msg = head
-        ? `the first line of ${name} now names doc ${head.id}, but this goog edit syncs doc ${id}; put back <!-- goog doc ${id} --> (nothing was pushed)`
-        : `the first line of ${name} must be the goog header; put back <!-- goog doc ${id} --> (nothing was pushed)`;
+        ? `the first line of ${name} now names ${head.kind} ${head.id}, but this goog edit syncs ${kind} ${id}; put back ${want} (nothing was pushed)`
+        : `the first line of ${name} must be the goog header; put back ${want} (nothing was pushed)`;
       state("error", ft.hash, msg, 1);
       logOnce("✗", msg, {line: 1});
       return;
