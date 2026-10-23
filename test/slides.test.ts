@@ -165,6 +165,15 @@ test("slides: a new <group> keeps what's inside an existing group, and won't hol
   const p = plan(fromApi(structuredClone(r)), parse(lines.join("\n")));
   assert.deepEqual(kinds(p.requests), ["groupObjects"]);
   assert.deepEqual((p.requests[0] as any).groupObjects.childrenObjectIds, ["grp_test", "h280c39f37343028d_1_124"]);
+  // Pasted twice: the second copy's children are copied, not grouped again.
+  const g = text().split("\n");
+  const ga = g.findIndex((l) => l.startsWith('<shape id="h280c39f37343028d_1_59"'));
+  const gb = g.findIndex((l, i) => i > ga && l.startsWith("</shape>") && g.slice(ga, i).some((x) => x.includes('id="h280c39f37343028d_1_60"')));
+  const block = ["<group>", ...g.slice(ga, gb + 1), "</group>"];
+  g.splice(ga, gb + 1 - ga, ...block, ...block);
+  const twice = plan(remote(), parse(g.join("\n"))).requests as any[];
+  assert.equal(twice.filter((q) => q.groupObjects).length, 1);
+  assert.ok(twice.some((q) => q.duplicateObject));
   // Tables can't be grouped: nothing is sent for them, and it says so.
   const t = text().split("\n");
   const first = t.findIndex((l) => l.startsWith('<table id="h280c39f37343028d_1_122"'));

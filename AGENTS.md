@@ -73,7 +73,8 @@ Observed live; the code depends on each:
   both on the next pass unless the file asks for them.
 - A text's API length excludes its final newline, which can't be deleted.
 - `ungroupObjects` keeps the children's ids and positions, and only takes
-  top-level groups; `groupObjects` needs at least two top-level children.
+  top-level groups; `groupObjects` needs at least two top-level children, and can't take
+  tables, videos or placeholders.
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.

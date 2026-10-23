@@ -158,8 +158,14 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
             walk(e.children);
             continue;
           }
-          const ready = e.children.every((c) => c.id && remote.els.get(c.id)?.slide === s.id && !remote.els.get(c.id)?.group);
-          if (ready && e.children.length >= 2) {
+          if (e.children.length < 2) {
+            warn(`a <group> needs at least two objects; slide ${s.id}'s new group wasn't made`);
+            walk(e.children);
+            continue;
+          }
+          // Children claimed already (a pasted copy) are copied by walk first.
+          const ready = e.children.every((c) => c.id && remote.els.get(c.id)?.slide === s.id && !remote.els.get(c.id)?.group && !claimedEls.has(c.id));
+          if (ready) {
             creating.push({groupObjects: {groupObjectId: e.id, childrenObjectIds: e.children.map((c) => c.id)}});
             // Whatever is inside a child that's a group goes into the new one
             // with it; it's diffed next pass.
