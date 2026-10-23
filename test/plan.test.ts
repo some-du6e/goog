@@ -258,6 +258,13 @@ test("new chips missing what they're made from warn instead of failing", () => {
   for (const w of [/needs email=/, /can't read the date "soon"/, /no dropdown in the doc has the option "Zed"/]) assert.ok(p.warnings.some((x) => w.test(x)), p.warnings.join("\n"));
 });
 
+test("a new chip that can't be made doesn't take the id of the next one of its type", async () => {
+  const sim = SimDoc.from("a b c");
+  const r = await push(sim, `a <chip type="date" date="next friday"> b <chip type="date" date="2026-10-31"> c`);
+  assert.equal(r.out.match(/<chip /g)?.length, 1, r.out);
+  assert.deepEqual(r.warnings, [`can't read the date "next friday"; write it like 2026-10-31`]);
+});
+
 test("a new <footnote> is created, and its text lands in the footnote once the id is known", () => {
   const remote = toRemote(SimDoc.from("Claim.").toApi());
   const target = parse(HEAD + `Claim<footnote text="Source: me">.`);

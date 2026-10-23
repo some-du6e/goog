@@ -44,6 +44,7 @@ export interface Plan {
   requests: Req[];
   warnings: string[];
   created: Created[];
+  chips: Atom[]; // new chips this pass sends an insert for, for adoptNew
 }
 
 // The raw documents.get JSON, attached by fetchDoc. Optional: without it the
@@ -445,6 +446,7 @@ interface Dropdowns {
 interface Shared {
   warnings: string[];
   created: Created[];
+  chips: Atom[];
   objects: Map<string, RemoteObj>;
   keep: Set<string>;
   remoteKeys: Set<string>;
@@ -457,6 +459,7 @@ class Planner {
   out: Req[] = [];
   warnings: string[];
   created: Created[];
+  chips: Atom[];
   ctx: Ctx = {};
   objects: Map<string, RemoteObj>;
   keep: Set<string>; // atom keys the target still has somewhere
@@ -473,6 +476,7 @@ class Planner {
     this.addFootnote = shared.addFootnote;
     this.warnings = shared.warnings;
     this.created = shared.created;
+    this.chips = shared.chips;
     this.objects = shared.objects;
     this.keep = shared.keep;
   }
@@ -981,8 +985,8 @@ class Planner {
   }
 
   // A chip with no id: one to create. The doc gives it an id, which the next
-  // pass adopts (see adoptNew).
-  chipMaker(atom: Atom): ((index: number) => number) | undefined {
+  // pass adopts (see adoptNew). `owner` is the file's atom that gets the id.
+  chipMaker(atom: Atom, owner = atom): ((index: number) => number) | undefined {
     const a = atom.attrs;
     const need = (attr: string) => {
       this.warn(`a new <chip type="${a.type}"> needs ${attr}="…"`);
@@ -1012,6 +1016,7 @@ class Planner {
       const last = reqs.at(-1)!;
       Object.values(last)[0].location = this.loc(index);
       this.out.push(...reqs);
+      this.chips.push(owner);
       return 1;
     };
   }
@@ -1075,7 +1080,7 @@ class Planner {
     if (!changed || (b.type === "person" && !b.email) || (b.type === "link" && !b.href) || (b.type === "date" && !timestamp(b.date))) return undefined;
     const {id: _, ...rest} = b;
     const fresh: Atom = {kind: "chip", key: atomKey("chip", rest), attrs: rest};
-    const make = this.chipMaker(fresh);
+    const make = this.chipMaker(fresh, n);
     if (!make) return undefined;
     // The new chip has no id until the next pass adopts it.
     n.attrs = rest;
@@ -1275,9 +1280,9 @@ function remoteDropdowns(api: any): Dropdowns {
 }
 
 // Chips get no id in the batchUpdate reply, so after a push the new ones in
-// `want` (chips without an id) take the ids of the chips the doc has that
-// `want` doesn't know, in document order, type by type.
-export function adoptNew(want: Doc | Block[], remote: Doc) {
+// `want` the pass sent (`sent`, without an id) take the ids of the chips the
+// doc has that `want` doesn't know, in document order, type by type.
+export function adoptNew(want: Doc | Block[], remote: Doc, sent: Atom[]) {
   const atoms = (d: Doc | Block[]): Atom[] => {
     const out: Atom[] = [];
     const walk = (blocks: Block[]) => {
@@ -1294,7 +1299,7 @@ export function adoptNew(want: Doc | Block[], remote: Doc) {
     return out;
   };
   const mine = atoms(want);
-  const fresh = mine.filter((a) => !a.attrs.id);
+  const fresh = mine.filter((a) => !a.attrs.id && sent.includes(a));
   if (!fresh.length) return;
   const known = new Set(mine.map((a) => a.attrs.id).filter(Boolean));
   const unknown = atoms(Array.isArray(want) ? remote.blocks : remote).filter((a) => a.attrs.id && !known.has(a.attrs.id));
@@ -1482,6 +1487,7 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
   const doc: Doc & {bodyOnly?: boolean} = Array.isArray(target) ? {kind: "doc", id: remote.doc.id, blocks: target, bodyOnly: true} : target;
   const warnings: string[] = [];
   const created: Created[] = [];
+  const chips: Atom[] = [];
   const {units: work, reqs: tabReqs} = units(remote, doc, warnings);
   if (ticksDiffer(remote.doc, doc)) warnings.push(CHECKS_WARNING);
   const keep = new Set<string>();
@@ -1496,7 +1502,7 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
     const holder: {segments?: Segment[]} = tab ?? doc;
     (holder.segments ??= []).push({kind: "footnote", id, blocks: [{type: "para", style: "p", runs: text ? [{text, style: {}}] : []}]});
   };
-  const shared: Shared = {warnings, created, objects: remoteObjects(remote.api), keep, remoteKeys, dropdowns: remoteDropdowns(remote.api), addFootnote};
+  const shared: Shared = {warnings, created, chips, objects: remoteObjects(remote.api), keep, remoteKeys, dropdowns: remoteDropdowns(remote.api), addFootnote};
   const run = (fn: (p: Planner, u: Unit, target: Block[]) => void): Req[] => {
     const all: Req[] = [];
     for (const u of work) {
@@ -1510,9 +1516,9 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
     return all;
   };
   const content = [...tabReqs, ...run((p, u, t) => p.segment(u.seg, t))];
-  if (content.length) return {pass: "content", requests: content, warnings, created};
+  if (content.length) return {pass: "content", requests: content, warnings, created, chips};
   created.length = 0;
   const lists = run((p, u, t) => p.lists(u.seg, t));
-  if (lists.length) return {pass: "lists", requests: lists, warnings, created: []};
-  return {pass: "done", requests: [], warnings, created: []};
+  if (lists.length) return {pass: "lists", requests: lists, warnings, created: [], chips: []};
+  return {pass: "done", requests: [], warnings, created: [], chips: []};
 }

@@ -142,7 +142,7 @@ export async function pushDoc(
     requests += p.requests.length;
     for (const c of p.created) c.apply(res.replies?.[p.requests.indexOf(c.req)]);
     remote = toRemote(await io.get(id));
-    adoptNew(want, remote.doc);
+    adoptNew(want, remote.doc, p.chips);
     const after = res.writeControl?.requiredRevisionId;
     if (after && remote.doc.rev && after !== remote.doc.rev) {
       throw new ApiError(400, `required revision changed during push: the doc was edited after goog's write (pass ${pass + 1}); merge again and retry`);
