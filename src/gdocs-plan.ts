@@ -1476,6 +1476,8 @@ function keysOf(doc: Doc, tabId: string | undefined): Set<string> {
   return out;
 }
 
+export const CHECKS_WARNING = "ticking or unticking checklist items can't be done through the Docs API; tick them in Docs";
+
 export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
   // A bare Block[] is just the body: segments and tabs are left alone.
   const doc: Doc & {bodyOnly?: boolean} = Array.isArray(target) ? {kind: "doc", id: remote.doc.id, blocks: target, bodyOnly: true} : target;
@@ -1483,7 +1485,7 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
   const created: Created[] = [];
   const {units: work, reqs: tabReqs} = units(remote, doc, warnings, created);
   if (checks(remote.doc) !== checks(doc) && checks(remote.doc).length === checks(doc).length) {
-    warnings.push("ticking or unticking checklist items can't be done through the Docs API; tick them in Docs");
+    warnings.push(CHECKS_WARNING);
   }
   const keep = new Set<string>();
   for (const u of work) collectKeys(u.target, keep);

@@ -2,7 +2,7 @@ import {existsSync, mkdirSync, readdirSync, writeFileSync} from "node:fs";
 import {join} from "node:path";
 import {ApiError, DOCS, DRIVE, api} from "./google.ts";
 import {fromApi} from "./gdocs-read.ts";
-import {adoptNew, plan, type Plan, type PlanRemote} from "./gdocs-plan.ts";
+import {CHECKS_WARNING, adoptNew, plan, type Plan, type PlanRemote} from "./gdocs-plan.ts";
 import type {Block, Doc, Para} from "./model.ts";
 
 export function toRemote(raw: any): PlanRemote {
@@ -125,7 +125,9 @@ export async function pushDoc(
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const p = plan(remote, want);
     opts.onPass?.(p, pass);
-    for (const w of p.warnings) if (!warnings.includes(w)) warnings.push(w);
+    // Only the first read knows which items are ticked (see markChecked), so
+    // only it can tell whether the file ticks differently.
+    for (const w of p.warnings) if (!warnings.includes(w) && (pass === 0 || w !== CHECKS_WARNING)) warnings.push(w);
     if (p.pass === "done") return {remote, requests, passes: pass, warnings};
     const sig = JSON.stringify(p.requests);
     if (sig === last) {

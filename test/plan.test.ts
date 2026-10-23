@@ -332,6 +332,21 @@ test("a doc edit between write and re-read stops the push", async () => {
   await assert.rejects(pushDoc("sim", parse(HEAD + "a\nb\n<li>c</li>"), {io: sneaky}), /required revision/);
 });
 
+test("a ticked checklist item doesn't warn on the passes after the first", async () => {
+  const sim = SimDoc.from('<li type="check">task</li>\nold');
+  const first = toRemote(sim.toApi());
+  for (const b of first.doc.blocks) if (b.type === "para" && b.list) b.list.checked = true; // as markChecked would
+  const r = await pushDoc("sim", parse(HEAD + '<li type="check" checked>task</li>\nnew'), {io: io(sim), first});
+  assert.equal(pulled(sim), '<li type="check">task</li>\nnew');
+  assert.deepEqual(r.warnings, []);
+  // Unticking it in the file still warns.
+  const sim2 = SimDoc.from('<li type="check">task</li>\nold');
+  const first2 = toRemote(sim2.toApi());
+  for (const b of first2.doc.blocks) if (b.type === "para" && b.list) b.list.checked = true;
+  const r2 = await pushDoc("sim", parse(HEAD + '<li type="check">task</li>\nnew'), {io: io(sim2), first: first2});
+  assert.match(r2.warnings.join(), /ticking or unticking/);
+});
+
 test("a stale revision is rejected on the first write", async () => {
   const sim = SimDoc.from("a");
   await assert.rejects(pushDoc("sim", parse(HEAD + "b"), {io: io(sim), rev: "r-old"}), /required revision/);
