@@ -4,9 +4,9 @@
 // See `goog help slides`.
 
 import {
-  type Token, FormatError, Parser, THEME_COLORS, attrs, blockLines, color, escapeText, num, parseHeader, tokenize, visible,
+  type Token, FormatError, Parser, attrs, blockLines, color, markerLine, num, parseHeader, tokenize, visible,
 } from "./format.ts";
-import {type Block, type Para, type Run, type Table, type TextStyle, cleanStyle} from "./model.ts";
+import {type Block, type Run, type Table, type TextStyle, cleanStyle} from "./model.ts";
 
 // Where an object sits. rot is clockwise degrees about its center; x/y is the
 // top-left corner before rotating. Unset fields mean "leave it as it is".
@@ -432,9 +432,9 @@ function checkText(blocks: Block[], line: number, where: string) {
 export function parse(src: string): Deck {
   const head = parseHeader(src);
   if (!head || head.kind !== "slides") throw new FormatError(1, `the first line must be the goog header, like <!-- goog slides DECK_ID -->`);
-  if (/^(<{7}|={7}|>{7})/m.test(src)) {
-    const line = src.split("\n").findIndex((l) => /^(<{7}|={7}|>{7})/.test(l)) + 1;
-    throw new FormatError(line, "the file still has merge conflict markers; resolve them first");
+  const marker = markerLine(src);
+  if (marker) {
+    throw new FormatError(marker, "the file still has merge conflict markers; resolve them first");
   }
   const deck: Deck = {kind: "slides", id: head.id, slides: new SlidesParser(tokenize(src, 1)).deck()};
   if (head.name !== undefined) deck.name = head.name;
@@ -443,4 +443,3 @@ export function parse(src: string): Deck {
   return deck;
 }
 
-export {THEME_COLORS, escapeText};

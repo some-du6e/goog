@@ -1,4 +1,4 @@
-import {existsSync, mkdirSync, readdirSync, writeFileSync} from "node:fs";
+import {mkdirSync, readdirSync, writeFileSync} from "node:fs";
 import {join} from "node:path";
 import {ApiError, DOCS, DRIVE, api} from "./google.ts";
 import {fromApi} from "./gdocs-read.ts";

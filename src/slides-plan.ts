@@ -13,7 +13,7 @@
 
 import {diffArrays} from "diff";
 import type {Block, Para, Run, TextStyle} from "./model.ts";
-import {type Deck, type El, type Geom, type Layout, type Slide, fmt, shout} from "./slides-format.ts";
+import {type Deck, type El, type Geom, type Layout, type Slide, shout} from "./slides-format.ts";
 import {
   type RElement, type RemoteDeck, EMU_PER_PT, affineFor, apiTransform, compose, invert, lineAffine,
 } from "./slides-read.ts";

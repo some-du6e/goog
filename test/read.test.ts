@@ -8,9 +8,8 @@
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {test} from "node:test";
-import {isDeepStrictEqual} from "node:util";
 import {parse, serialize} from "../src/format.ts";
-import {fromApi, unplannedChanges, type ISegment, type Remote} from "../src/gdocs-read.ts";
+import {fromApi, type ISegment, type Remote} from "../src/gdocs-read.ts";
 import {plan} from "../src/gdocs-plan.ts";
 import type {Doc} from "../src/model.ts";
 
@@ -59,7 +58,6 @@ for (const name of FIXTURES) {
     const doc = parse(serialize(remote.doc));
     const p = plan(remote, doc.blocks);
     assert.notEqual(p.pass, "content", JSON.stringify(p.requests).slice(0, 500));
-    assert.deepEqual(unplannedChanges(remote, doc), []);
   });
 
   test(`${name}: an untouched doc plans zero requests`, () => {
@@ -180,14 +178,3 @@ test("synthetic doc: suggestions, TOC, floats, hr, equation, column break, unkno
   assert.equal(parse(ls.join("\n")).name, "weird --> title");
 });
 
-test("unplannedChanges flags edits the body planner doesn't push", () => {
-  const remote = fromApi(load("live-structure"));
-  const text = serialize(remote.doc)
-    .replace("Footer text", "Footer edited")
-    .replace("Child body", "Child edited");
-  assert.deepEqual(unplannedChanges(remote, parse(text)), [
-    "edits to the footer kix.ayfv69cww9wq aren't pushed yet",
-    `tab "Child tab": edits outside the first tab aren't pushed yet`,
-  ]);
-  assert.equal(isDeepStrictEqual(parse(text).tabs?.[2].blocks, remote.doc.tabs?.[2].blocks), false);
-});

@@ -9,7 +9,7 @@
 import {appendFileSync, existsSync, mkdirSync, statSync, truncateSync, watch, type FSWatcher} from "node:fs";
 import {basename, dirname, resolve} from "node:path";
 import {type Kind, backends, kindOf} from "./backend.ts";
-import {FormatError, parseHeader} from "./format.ts";
+import {FormatError, markerLine, parseHeader} from "./format.ts";
 import {ApiError, setRetryListener} from "./google.ts";
 import {
   bodyOf, canonBody, hasConflictMarkers, logPath, pull, push, readBase, readState, readText, setState, SyncError,
@@ -155,7 +155,7 @@ export async function edit(id: string, fileArg: string, opts: EditOptions) {
     }
     if (hasConflictMarkers(ft.text)) {
       lastHash = ft.hash;
-      const line = ft.text.split("\n").findIndex((l) => /^(<{7}|={7}|>{7})( |$)/.test(l)) + 1;
+      const line = markerLine(ft.text);
       state("conflict", ft.hash, `unresolved conflict markers (first at line ${line})`, line);
       logOnce("!", `${name} still has conflict markers (line ${line}); not pushed. Keep the version you want, delete the <<<<<<< ======= >>>>>>> lines, and save.`);
       return;

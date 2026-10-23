@@ -9,7 +9,6 @@
 
 import type {Atom, Block, CellInfo, Doc, ListInfo, Opaque, Para, ParaStyle, Run, Segment, Tab, TextStyle} from "./model.ts";
 import {atomKey, normalizeRuns} from "./model.ts";
-import {blockKey} from "./format.ts";
 
 export const LINK_COLOR = "#1155cc";
 
@@ -447,43 +446,4 @@ export function fromApi(api: any): Remote {
     doc.tabs[0].blocks = doc.blocks;
   }
   return remote;
-}
-
-// Differences between a target doc and the remote that the body planner
-// doesn't push: tabs after the first, and headers/footers/footnote text. The
-// sync layer should show these as warnings instead of dropping them quietly.
-export function unplannedChanges(remote: Remote, target: Doc): string[] {
-  const out: string[] = [];
-  const key = (blocks: Block[]) => blocks.map(blockKey).join("\n");
-  const segKey = (segs: Segment[] | undefined) =>
-    new Map((segs ?? []).map((s) => [`${s.kind}:${s.id}`, key(s.blocks)]));
-  const compareSegs = (have: Segment[] | undefined, want: Segment[] | undefined, where: string) => {
-    const a = segKey(have);
-    const b = segKey(want);
-    for (const [k, v] of b) {
-      const [kind, id] = k.split(":");
-      if (!a.has(k)) out.push(`${where}${kind} ${id} doesn't exist in the doc; it can't be created from the file`);
-      else if (a.get(k) !== v) out.push(`${where}edits to the ${kind === "footnote" ? "footnote text" : kind} ${id} aren't pushed yet`);
-    }
-    for (const k of a.keys()) if (!b.has(k)) out.push(`${where}the ${k.replace(":", " ")} was removed from the file; goog doesn't delete it`);
-  };
-  compareSegs(remote.doc.segments, target.segments, "");
-  const have = remote.doc.tabs ?? [];
-  const want = target.tabs ?? [];
-  if (have.length > 1 || want.length > 1) {
-    const byId = new Map(have.map((t) => [t.id, t]));
-    for (const [k, t] of want.entries()) {
-      const r = byId.get(t.id);
-      if (!r) {
-        out.push(`tab ${JSON.stringify(t.title)} (${t.id}) doesn't exist in the doc; new tabs can't be created from the file`);
-        continue;
-      }
-      const where = `tab ${JSON.stringify(r.title)}: `;
-      if (r.title !== t.title || r.parent !== t.parent || r.icon !== t.icon) out.push(`${where}tab title, icon or nesting changes aren't pushed`);
-      if (k > 0 && key(r.blocks) !== key(t.blocks)) out.push(`${where}edits outside the first tab aren't pushed yet`);
-      if (k > 0) compareSegs(r.segments, t.segments, where);
-    }
-    for (const r of have) if (!want.some((t) => t.id === r.id)) out.push(`tab ${JSON.stringify(r.title)} was removed from the file; goog doesn't delete tabs`);
-  }
-  return out;
 }

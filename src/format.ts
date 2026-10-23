@@ -668,12 +668,17 @@ export function parseHeader(src: string): Header | null {
   return h;
 }
 
+// The line (from 1) of the first merge conflict marker, or 0 if there's none.
+export function markerLine(text: string): number {
+  return text.split("\n").findIndex((l) => /^(<{7}|={7}|>{7})( |$)/.test(l)) + 1;
+}
+
 export function parse(src: string): Doc {
   const head = parseHeader(src);
   if (!head) throw new FormatError(1, `the first line must be the goog header, like <!-- goog doc DOC_ID -->`);
-  if (/^(<{7}|={7}|>{7})/m.test(src)) {
-    const line = src.split("\n").findIndex((l) => /^(<{7}|={7}|>{7})/.test(l)) + 1;
-    throw new FormatError(line, "the file still has merge conflict markers; resolve them first (a literal line of ======= is written &#61;======)");
+  const marker = markerLine(src);
+  if (marker) {
+    throw new FormatError(marker, "the file still has merge conflict markers; resolve them first (a literal line of ======= is written &#61;======)");
   }
   const tabs = new Parser(tokenize(src, 1)).top();
   const doc: Doc = {kind: "doc", id: head.id, rev: head.rev, blocks: tabs[0].blocks};

@@ -13,7 +13,7 @@ import {createTwoFilesPatch} from "diff";
 import {diff3Merge} from "node-diff3";
 import {CACHE_DIR, readJson, writeAtomic, writeJson} from "./config.ts";
 import {type Kind, backendOfText, backends, kindOf} from "./backend.ts";
-import {FormatError, parseHeader} from "./format.ts";
+import {FormatError, markerLine, parseHeader} from "./format.ts";
 import {ApiError} from "./google.ts";
 
 // ---------- refs ----------
@@ -96,8 +96,7 @@ export const canonBody = (text: string) => {
   return bodyOf(be.serialize(be.parse(text)));
 };
 
-const MARKER = /^(<{7}|={7}|>{7})( |$)/m;
-export const hasConflictMarkers = (text: string) => MARKER.test(text);
+export const hasConflictMarkers = (text: string) => markerLine(text) > 0;
 
 // ---------- base and state records ----------
 
