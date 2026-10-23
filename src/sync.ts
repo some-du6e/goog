@@ -294,6 +294,7 @@ export interface PullResult {
   replaced: boolean;
   images: string[]; // saved copies of the doc's images, see imagesDir
   slides?: string[]; // a deck's slides as pictures, slide-1.png, …
+  drawing?: boolean; // the deck's pictures are being saved in the background; goog pics waits
 }
 
 // Where pull saves a file's images: cer.goog -> cer.files/
@@ -343,6 +344,10 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
   }
   const hash = writeText(file, text, crlf);
   writeBase(file, {id, text, rev: remote.rev});
+  if (be.saveImagesLater) {
+    be.saveImagesLater(id, imagesDir(file));
+    return {file, id, hash, replaced: exists, images: [], drawing: true};
+  }
   // Images are a convenience; a failed download doesn't fail the pull.
   const pics = await be.saveImages(remote, imagesDir(file)).catch((): {images: string[]; slides?: string[]} => ({images: []}));
   return {file, id, hash, replaced: exists, images: pics.images, ...(pics.slides ? {slides: pics.slides} : {})};
@@ -413,6 +418,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     if (savedSince()) return {...out, savedDuring: true};
     out.hash = writeText(file, act.text, ours.crlf);
     save(theirs, remote.rev);
+    be.saveImagesLater?.(id, imagesDir(file));
     return {...out, status: "pulled", rewrote: true};
   }
   if (act.action === "conflict") {
@@ -437,6 +443,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   out.requests = res.requests;
   out.warnings = res.warnings;
   out.status = res.requests ? "pushed" : "unchanged";
+  if (res.requests) be.saveImagesLater?.(id, imagesDir(file));
   const final = res.fetched.text;
   if (!savedSince()) {
     // Rewrite the file only if the doc came out different from it (a merge, or

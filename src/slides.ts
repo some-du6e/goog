@@ -1,8 +1,11 @@
 // Talks to the Slides API: reads a deck, pushes a .goog file to it pass by
 // pass, and saves its pictures for an agent to look at.
 
-import {existsSync, mkdirSync, readdirSync, rmSync, writeFileSync} from "node:fs";
+import {spawn} from "node:child_process";
+import {createHash} from "node:crypto";
+import {closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import {join} from "node:path";
+import {fileURLToPath} from "node:url";
 import {ApiError, api} from "./google.ts";
 import type {Deck} from "./slides-format.ts";
 import {plan, type SPlan} from "./slides-plan.ts";
@@ -98,8 +101,10 @@ async function download(url: string): Promise<{type: string; data: Buffer}> {
 }
 
 // Saves each picture on the deck as <dir>/<object id>.<ext> (skipping ones
-// already saved; an id always names the same picture) and a fresh picture of
-// every slide as <dir>/slide-<n>.png, since where things sit is half of a slide.
+// already saved; an id always names the same picture) and a picture of every
+// slide as <dir>/slide-<n>.png, since where things sit is half of a slide. A
+// slide is drawn again only when what's on it changed: .drawn.json remembers
+// what each slide-<n>.png shows.
 export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{images: string[]; slides: string[]}> {
   mkdirSync(dir, {recursive: true});
   const have = new Map(readdirSync(dir).map((f) => [f.replace(/\.[^.]*$/, ""), f]));
@@ -116,15 +121,91 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
     images.set(id, join(dir, f));
   });
   const slides: string[] = remote.slides.map((_, i) => join(dir, `slide-${i + 1}.png`));
-  const drawing = inBatches(remote.slides.map((s, i) => [s.id, slides[i]] as const), 12, async ([page, file]) => {
+  const drawnPath = join(dir, ".drawn.json");
+  let drawn: Record<string, string> = {};
+  try {
+    drawn = JSON.parse(readFileSync(drawnPath, "utf8"));
+  } catch {}
+  const hashes = remote.deck.slides.map((s) => createHash("sha1").update(JSON.stringify(s)).digest("hex"));
+  const key = (i: number) => `slide-${i + 1}`;
+  const stale = remote.slides.map((s, i) => [s.id, i] as const).filter(([, i]) => drawn[key(i)] !== hashes[i] || !existsSync(slides[i]));
+  const drawing = inBatches(stale, 12, async ([page, i]) => {
     const t = await api<{contentUrl: string}>("GET", `${SLIDES}/${encodeURIComponent(remote.deck.id)}/pages/${encodeURIComponent(page)}/thumbnail?thumbnailProperties.mimeType=PNG&thumbnailProperties.thumbnailSize=MEDIUM`);
-    writeFileSync(file, (await download(t.contentUrl)).data);
+    writeFileSync(slides[i], (await download(t.contentUrl)).data);
+    drawn[key(i)] = hashes[i];
   });
-  await Promise.all([saving, drawing]);
+  try {
+    await Promise.all([saving, drawing]);
+  } finally {
+    writeFileSync(drawnPath, JSON.stringify(drawn));
+  }
   // Pictures of slides that are gone.
   for (const f of readdirSync(dir)) {
     const m = /^slide-(\d+)\.png$/.exec(f);
     if (m && Number(m[1]) > remote.slides.length && existsSync(join(dir, f))) rmSync(join(dir, f));
   }
   return {images: pics.map(([id]) => images.get(id)!).filter(Boolean), slides};
+}
+
+// Drawing the slides is most of a pull's time (the thumbnail API takes about
+// a second a slide), so pull and push hand it to a detached `goog draw`
+// process and return once the text is written. <dir>/.drawing holds its pid
+// while it runs; `goog pics` waits for it. A newer draw replaces an older one.
+const BIN = fileURLToPath(new URL("../bin/goog.ts", import.meta.url));
+const drawingPath = (dir: string) => join(dir, ".drawing");
+export const drawErrorPath = (dir: string) => join(dir, ".draw-error");
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e?.code === "EPERM";
+  }
+};
+
+// The pid of the draw running for dir, if one is.
+export function drawingPid(dir: string): number | undefined {
+  try {
+    const pid = Number(readFileSync(drawingPath(dir), "utf8"));
+    if (pid && alive(pid)) return pid;
+  } catch {}
+  return undefined;
+}
+
+export function drawInBackground(id: string, dir: string) {
+  mkdirSync(dir, {recursive: true});
+  const old = drawingPid(dir);
+  if (old) {
+    try {
+      process.kill(old);
+    } catch {}
+  }
+  rmSync(drawErrorPath(dir), {force: true});
+  const err = openSync(drawErrorPath(dir), "w");
+  const child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
+  closeSync(err);
+  writeFileSync(drawingPath(dir), String(child.pid));
+  child.unref();
+}
+
+// What `goog draw` runs: fetch the deck and save its pictures.
+export async function drawNow(id: string, dir: string) {
+  try {
+    await saveDeckImages(await fetchDeck(id), dir);
+  } finally {
+    // Only clear the mark if it's still ours (a newer draw may have replaced it).
+    if (drawingPid(dir) === process.pid || !drawingPid(dir)) rmSync(drawingPath(dir), {force: true});
+  }
+}
+
+// Blocks until the draw for dir is done. Returns its error, if it failed.
+export async function waitForDrawing(dir: string, timeoutMs: number): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (drawingPid(dir)) {
+    if (Date.now() > deadline) throw new Error(`the slides are still being drawn after ${Math.round(timeoutMs / 1000)}s`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const e = existsSync(drawErrorPath(dir)) ? readFileSync(drawErrorPath(dir), "utf8").trim() : "";
+  return e || undefined;
 }

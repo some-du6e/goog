@@ -11,7 +11,7 @@ import {FormatError} from "./format.ts";
 import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseCourseRef, parseWorkRef, type Attachment, type Work} from "./classroom.ts";
 import {createDoc} from "./gdocs.ts";
 import {clock, parseVideo, timed, transcript} from "./youtube.ts";
-import {createDeck} from "./slides.ts";
+import {createDeck, drawNow, drawingPid, waitForDrawing} from "./slides.ts";
 import {DRIVE, api} from "./google.ts";
 import {
   bodyOf, canonBody, imagesDir, isAlive, listStates, logPath, patch, pull, push, readBase, readState, readText, reconcile,
@@ -60,6 +60,7 @@ One-shot
                                 edits made in the doc since the last sync
   goog diff <file>              what a push would change in the doc, as a unified diff
   goog cat <doc>                print the doc as .goog without writing a file
+  goog pics <file>              a deck's slides as pictures, once they're drawn
   goog check <file>             parse the file and report format errors
 
 Drive
@@ -167,8 +168,9 @@ default style, so to match neighbouring text, write inside the same tags.
 const SLIDES_HELP = `.goog format for Google Slides
 
 The file mirrors the deck: whatever you leave as pulled stays exactly as it is,
-so change only what you mean to. Pull also saves each slide as a picture
-(<file>.files/slide-N.png); look at it before moving things.
+so change only what you mean to. Pull and push also draw each slide as a
+picture (<file>.files/slide-N.png) in the background; goog pics <file> waits
+for them. Look at them before moving things.
 
   <slide id="…" layout="title-and-body">   one per slide, in order; <slide … skip>
                                            is skipped when presenting
@@ -481,7 +483,8 @@ async function cmdEditBackground(id: string, file: string, extra: string[], asJs
       else {
         out(`watching ${show(file)} (pid ${child.pid}): ${status}${s?.message ? `: ${s.message}` : ""}`);
         out(`after saving: goog wait ${show(file)}   activity: goog log ${show(file)}   stop: goog stop ${show(file)}`);
-        outImages(savedImages(file));
+        if (drawingPid(imagesDir(file))) out(DRAWING_NOTE(file));
+        else outImages(savedImages(file));
         outContents(file);
       }
       return;
@@ -491,7 +494,19 @@ async function cmdEditBackground(id: string, file: string, extra: string[], asJs
 
 function savedImages(file: string): string[] {
   const dir = imagesDir(file);
-  return existsSync(dir) ? readdirSync(dir).map((f) => join(dir, f)) : [];
+  return existsSync(dir) ? readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => join(dir, f)) : [];
+}
+
+const DRAWING_NOTE = (file: string) => `slides as pictures: being drawn in the background into ${show(imagesDir(file))}/slide-N.png; goog pics ${show(file)} waits for them and lists them (look before moving things)`;
+
+async function cmdPics(arg: string | undefined, timeoutS: number, asJson: boolean) {
+  const file = need(arg, "goog pics <file>");
+  if (!existsSync(file)) throw new Error(`${file} doesn't exist`);
+  const dir = imagesDir(file);
+  const err = await waitForDrawing(dir, timeoutS * 1000);
+  if (err) throw new Error(`drawing the slides failed: ${err.replace(/^goog: /, "")}`);
+  if (asJson) return json({ok: true, file, images: savedImages(file)});
+  outImages(savedImages(file));
 }
 
 function outImages(images: string[]) {
@@ -791,7 +806,8 @@ export async function main(argv: string[]) {
       const r = await pull(ref.id, file, {force: flags.force, kind: ref.kind});
       if (asJson) return json({ok: true, ...r, file: resolve(file)});
       out(`${r.replaced ? "replaced" : "pulled into"} ${file}${r.slides ? " (a Slides deck: goog help slides has the format)" : ""}`);
-      outImages([...(r.slides ?? []), ...r.images]);
+      if (r.drawing) out(DRAWING_NOTE(file));
+      else outImages([...(r.slides ?? []), ...r.images]);
       return outContents(file);
     }
     case "push": {
@@ -828,6 +844,7 @@ export async function main(argv: string[]) {
       }
       out(`pushed ${r.requests} edit(s)${notes.length ? `; ${notes.join("; ")}` : ""}`);
       if (r.savedDuring) out(again);
+      if (drawingPid(imagesDir(file))) out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
       return;
     }
     case "diff": {
@@ -886,6 +903,11 @@ export async function main(argv: string[]) {
       for (const s of all) printStatus(s);
       return;
     }
+    case "pics":
+      return cmdPics(pos[0], seconds(flags.timeout, 300), asJson);
+    case "draw":
+      // Run by drawInBackground, not by people.
+      return drawNow(need(pos[0], "goog draw <deck> <dir>"), need(pos[1], "goog draw <deck> <dir>"));
     case "wait":
       return cmdWait(pos[0], seconds(flags.timeout, 120), asJson);
     case "cat": {

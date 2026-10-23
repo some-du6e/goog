@@ -8,7 +8,7 @@ import {CHECKS_WARNING, plan as planDoc, ticksDiffer} from "./gdocs-plan.ts";
 import {DRIVE, api} from "./google.ts";
 import {parse as parseDeck, serialize as serializeDeck} from "./slides-format.ts";
 import {plan as planDeck} from "./slides-plan.ts";
-import {fetchDeck, fetchDeckRev, pushDeck, saveDeckImages} from "./slides.ts";
+import {drawInBackground, fetchDeck, fetchDeckRev, pushDeck, saveDeckImages} from "./slides.ts";
 
 export type Kind = "doc" | "slides";
 
@@ -31,6 +31,8 @@ export interface Backend {
   plan(f: Fetched, target: any): {requests: unknown[]; warnings: string[]};
   push(id: string, target: any, opts: {rev?: string; first: Fetched}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
   saveImages(f: Fetched, dir: string): Promise<{images: string[]; slides?: string[]}>;
+  // Saves the images in a background process instead (see drawInBackground).
+  saveImagesLater?(id: string, dir: string): void;
 }
 
 const docs: Backend = {
@@ -72,6 +74,7 @@ const slides: Backend = {
     return {fetched: {text: serializeDeck(res.remote.deck), rev: res.remote.deck.rev, remote: res.remote}, requests: res.requests, warnings: res.warnings};
   },
   saveImages: (f, dir) => saveDeckImages(f.remote, dir),
+  saveImagesLater: drawInBackground,
 };
 
 export const backends: Record<Kind, Backend> = {doc: docs, slides};

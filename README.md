@@ -123,8 +123,10 @@ Speaker notes, one paragraph per line.
 
 Text inside a shape, table cell or `<notes>` is written as in a doc. The
 font, size and color most of an object's text shares go on its tag, so the
-text itself stays readable. Pulling also saves each slide as a picture
-(`<id>.files/slide-N.png`) next to the deck's images.
+text itself stays readable. Pulling and pushing also draw each slide as a
+picture (`<id>.files/slide-N.png`) next to the deck's images. That happens in
+the background, since it's most of a pull's time, and only for slides that
+changed; `goog pics <file>` waits for it.
 
 From the file you can edit text, move, resize and rotate objects, recolor
 fills and outlines (`#rrggbb` or theme colors like `accent1`), move a line's ends, add or
