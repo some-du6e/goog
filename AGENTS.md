@@ -54,6 +54,8 @@ Done means `npm test` and `npm run typecheck` both pass.
   checklist item, and setting a list's start number. Checked state is read
   from Drive's text/markdown export (`markChecked` in gdocs.ts).
 - Chip inserts reply `{}`. `adoptNew` picks up their ids after the refetch.
+- `deleteTab` deletes the tab's child tabs too, so the planner never deletes a
+  tab whose children the file keeps.
 
 ## Slides API ground truth
 
@@ -70,6 +72,8 @@ Observed live; the code depends on each:
 - New shapes get a thin dark outline and a theme fill; the planner removes
   both on the next pass unless the file asks for them.
 - A text's API length excludes its final newline, which can't be deleted.
+- `ungroupObjects` keeps the children's ids and positions, and only takes
+  top-level groups; `groupObjects` needs at least two top-level children.
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.
