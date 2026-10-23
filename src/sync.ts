@@ -188,7 +188,8 @@ export function isAlive(pid: number | undefined): boolean {
 export function startedAt(pid: number): string | undefined {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return f[0] === "Z" || f[0] === "X" ? "dead" : f[19]; // a zombie has exited
   } catch {
     return undefined;
   }
