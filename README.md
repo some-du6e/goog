@@ -127,10 +127,10 @@ text itself stays readable. Pulling also saves each slide as a picture
 From the file you can edit text, move, resize and rotate objects, recolor
 fills and outlines (`#rrggbb` or theme colors like `accent1`), move a line's ends, add or
 remove table rows and columns (at the right edge), set alt text, write speaker
-notes, group objects (wrap them in `<group>`), change or restack what's in a
-top-level group, and delete, reorder or skip (`<slide skip>`) slides. A group
+notes, group objects (wrap them in `<group>`), change or restack what's in any
+group, and delete, reorder or skip (`<slide skip>`) slides. A group
 needs two or more objects and can't hold tables, videos or layout
-placeholders. Only a top-level group's members can change.
+placeholders.
 New shapes, tables, lines, images (`src="https://…"`), YouTube or Drive videos, and
 slides (`<slide layout="…">`, with `<shape placeholder="title">` filling the
 layout's boxes) are tags without an id. Pasting a slide block or an object's
