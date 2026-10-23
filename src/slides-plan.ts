@@ -550,7 +550,11 @@ function diffEl(e: El, r: RElement, warn: (w: string) => void): any[] {
     warn(`${r.id} is a ${cur.kind} in the deck; an object can't change kind (delete it and add a new one without an id)`);
     return out;
   }
-  if ((e.alt ?? "") !== (cur.alt ?? "")) out.push({updatePageElementAltText: {objectId: r.id, description: e.alt ?? ""}});
+  if ((e.alt ?? "") !== (cur.alt ?? "")) {
+    // Slides refuses alt text on a group ("operation is not allowed on group").
+    if (e.kind === "group") warn(`Slides can't set a <group>'s alt text (${r.id}); give its members alt text instead`);
+    else out.push({updatePageElementAltText: {objectId: r.id, description: e.alt ?? ""}});
+  }
   if ("geom" in e && "geom" in cur && e.kind !== "table") {
     const g = wantedGeom(e.geom, cur.geom);
     if (!sameGeom(g, cur.geom)) out.push(moveTo(r, affineFor(g as any, r.W || 1, r.H || 1)));

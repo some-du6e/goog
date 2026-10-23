@@ -89,6 +89,8 @@ Observed live; the code depends on each:
   notes page, and 5-50 characters of `[a-zA-Z0-9_\-:]`, the first not `-`
   or `:` (`fresh` in slides-plan.ts).
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
+- `updatePageElementAltText` on a group fails the whole batch ("operation is
+  not allowed on group"), so the planner warns instead of sending it.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.
 - The imported token has no presentations scope; its drive scope covers the

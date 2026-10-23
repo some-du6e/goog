@@ -357,3 +357,10 @@ test("a placeholder a new slide's layout lacks gets one warning", () => {
   assert.match(r.warnings.join(), /can't go in a <group>/);
   assert.doesNotMatch(r.warnings.join(), /can only be added with a new <slide>/);
 });
+
+test("a group's alt text isn't sent, since Slides refuses it", () => {
+  const raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")));
+  const p = plan(fromApi(structuredClone(raw)), parse(text(raw).replace('<group id="ggggg"', '<group id="ggggg" alt="bean life cycle"')));
+  assert.ok(!p.requests.some((q) => q.updatePageElementAltText), JSON.stringify(p.requests));
+  assert.match(p.warnings.join(), /can't set a <group>'s alt text/);
+});
