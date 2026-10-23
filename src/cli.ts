@@ -358,8 +358,8 @@ async function cmdWait(arg: string | undefined, timeoutS: number, asJson: boolea
   const deadline = Date.now() + timeoutS * 1000;
   for (;;) {
     const res = files.map((file) => {
-      const s = readState(file);
-      if (!s || s.status === "stopped" || !isAlive(s.pid)) {
+      const s = watcherOf(file);
+      if (!s) {
         return {file, done: true, code: EXIT.error, status: "not watched", message: `no goog edit is running for ${show(file)}; goog push ${show(file)} sends it once`};
       }
       if (!existsSync(file)) return {file, done: true, code: EXIT.error, status: "missing", message: `${show(file)} doesn't exist`};

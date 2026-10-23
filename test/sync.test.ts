@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {existsSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs";
+import {mkdtempSync, readdirSync, readFileSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
@@ -118,22 +118,22 @@ test("bases are per file, so a cat-ed copy doesn't inherit another file's histor
 
 test("state records and listing", (t) => {
   const f = join(tmp, "s.goog");
-  // Stand-ins for a watcher (its command line names goog) and for an
-  // unrelated program that got a dead watcher's pid.
-  const keep = "setTimeout(() => {}, 60000)";
-  const watcher = spawn(process.execPath, ["-e", keep, "goog", "edit"], {stdio: "ignore"});
-  const other = spawn(process.execPath, ["-e", keep], {stdio: "ignore"});
-  t.after(() => (watcher.kill(), other.kill()));
+  const watcher = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {stdio: "ignore"});
+  t.after(() => watcher.kill());
   S.setState(f, {status: "synced", id: ID, pid: watcher.pid!, hash: "h"});
   assert.equal(S.readState(f)?.status, "synced");
   assert.ok(S.watcherOf(f));
   assert.ok(S.listStates().some((s) => s.file === f));
-  S.setState(f, {status: "stopped", id: ID, pid: watcher.pid!});
-  assert.equal(S.watcherOf(f), null);
-  if (existsSync("/proc/self/cmdline")) {
-    S.setState(f, {status: "synced", id: ID, pid: other.pid!, hash: "h"});
+  if (S.startedAt(watcher.pid!)) {
+    // A watcher that died without saying so, whose pid now runs something else.
+    const dir = join(tmp, "cache", "state");
+    const name = readdirSync(dir).find((n) => JSON.parse(readFileSync(join(dir, n), "utf8")).file === f)!;
+    const st = JSON.parse(readFileSync(join(dir, name), "utf8"));
+    writeFileSync(join(dir, name), JSON.stringify({...st, started: "1"}));
     assert.equal(S.watcherOf(f), null);
   }
+  S.setState(f, {status: "stopped", id: ID, pid: watcher.pid!});
+  assert.equal(S.watcherOf(f), null);
 });
 
 // ---------- push and pull against a fake backend ----------

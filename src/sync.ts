@@ -142,11 +142,12 @@ export interface SyncState {
   hash?: string; // hash of the file content this status is about
   message?: string;
   line?: number;
+  started?: string; // when the process `pid` started, where the OS says (see startedAt)
   at: string;
 }
 
-export function setState(file: string, s: Omit<SyncState, "at" | "file">) {
-  writeJson(statePath(file), {...s, file: resolve(file), at: new Date().toISOString()});
+export function setState(file: string, s: Omit<SyncState, "at" | "file" | "started">) {
+  writeJson(statePath(file), {...s, started: startedAt(s.pid), file: resolve(file), at: new Date().toISOString()});
 }
 
 export function readState(file: string): SyncState | null {
@@ -171,27 +172,35 @@ export function forgetState(file: string) {
   rmSync(statePath(file), {force: true});
 }
 
-// Whether a watcher's pid is still running goog. A watcher that died without
-// saying so can leave its pid to some other program; where /proc says what a
-// pid runs, that one doesn't count (and goog stop won't kill it).
 export function isAlive(pid: number | undefined): boolean {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
-  } catch (e: any) {
-    if (e?.code !== "EPERM") return false;
-  }
-  try {
-    return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("goog");
-  } catch {
     return true;
+  } catch (e: any) {
+    return e?.code === "EPERM";
   }
 }
 
-// The live `goog edit` for a file, if there is one.
+// When a process started (clock ticks since boot, from /proc/<pid>/stat), or
+// undefined where there's no /proc. A pid plus its start time names one
+// process, even after the pid is reused.
+export function startedAt(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+  } catch {
+    return undefined;
+  }
+}
+
+// The live `goog edit` for a file, if there is one. A watcher that died
+// without saying so can leave its pid to another program, which doesn't count
+// (so goog stop won't kill it).
 export function watcherOf(file: string): SyncState | null {
   const s = readState(file);
-  return s && s.status !== "stopped" && isAlive(s.pid) ? s : null;
+  if (!s || s.status === "stopped" || !isAlive(s.pid)) return null;
+  return s.started && s.started !== startedAt(s.pid) ? null : s;
 }
 
 // ---------- merging ----------
