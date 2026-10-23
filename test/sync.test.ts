@@ -164,6 +164,17 @@ test("pull won't replace a file it has no record of unless it matches the doc or
   await S.pull(ID, f, {kind: "doc"});
 });
 
+test("pull won't drop unpushed edits to a synced file unless --force", async () => {
+  const f = fileIn("dirty.goog");
+  fakeDoc(doc("one"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("one", "unpushed"));
+  await assert.rejects(S.pull(ID, f, {kind: "doc"}), /changes that aren't in the doc yet/);
+  assert.equal(readFileSync(f, "utf8"), doc("one", "unpushed"));
+  await S.pull(ID, f, {kind: "doc", force: true});
+  assert.equal(readFileSync(f, "utf8"), doc("one"));
+});
+
 test("a save made while push reads the doc isn't overwritten", async () => {
   const f = fileIn("race-pull.goog");
   const remote = fakeDoc(doc("one", "two", "three"));

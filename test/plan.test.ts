@@ -384,3 +384,9 @@ test("plain text edit is a single pass", async () => {
   const r = await push(new SimDoc(START), `<h1>Cellular Respiration</h1>\n\nAnswer every question in full sentences.\n1. Why do cells need oxygen? ANSWER HERE\nThanks 🙂 bye\n`);
   assert.equal(r.passes, 1);
 });
+
+test("two edits in one paragraph land in one pass (applied back to front)", async () => {
+  const r = await push(SimDoc.from("The quick fox ran into the forest today."), "The quick elephant ran into the woods today.");
+  assert.equal(r.out, "The quick elephant ran into the woods today.");
+  assert.equal(r.passes, 1);
+});
