@@ -152,10 +152,23 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
           // Only the group is new: its children keep their ids, so ones that
           // already exist are grouped rather than made again.
           if (!e.id || remote.els.has(e.id) || !VALID_ID.test(e.id)) e.id = newId();
+          // Slides can't group these; they stay ungrouped.
+          if (e.children.some((c) => c.kind === "table" || c.kind === "video" || (c.kind === "shape" && c.placeholder))) {
+            warn(`a <group> can't hold tables, videos or layout placeholders in Slides, so slide ${s.id}'s new group wasn't made`);
+            walk(e.children);
+            continue;
+          }
           const ready = e.children.every((c) => c.id && remote.els.get(c.id)?.slide === s.id && !remote.els.get(c.id)?.group);
           if (ready && e.children.length >= 2) {
             creating.push({groupObjects: {groupObjectId: e.id, childrenObjectIds: e.children.map((c) => c.id)}});
-            for (const c of e.children) claimedEls.add(c.id!);
+            // Whatever is inside a child that's a group goes into the new one
+            // with it; it's diffed next pass.
+            const claim = (id: string) => {
+              claimedEls.add(id);
+              for (const r of remote.els.values()) if (r.group === id) claim(r.id);
+            };
+            for (const c of e.children) claim(c.id!);
+            busy = true;
           } else walk(e.children);
           continue;
         }

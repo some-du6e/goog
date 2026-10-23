@@ -150,6 +150,33 @@ test("slides: wrapping existing objects in a new <group> groups them", () => {
   assert.deepEqual(reqs[0].groupObjects.childrenObjectIds, ids);
 });
 
+test("slides: a new <group> keeps what's inside an existing group, and won't hold tables", () => {
+  // An existing group (two text boxes) and the slide's image, wrapped together.
+  const r = structuredClone(raw);
+  const slide = r.slides[1];
+  const [a, b, ...rest] = slide.pageElements;
+  slide.pageElements = [{objectId: "grp_test", size: a.size, transform: {scaleX: 1, scaleY: 1, unit: "EMU"}, elementGroup: {children: [a, b]}}, ...rest];
+  const s = serialize(fromApi(structuredClone(r)).deck);
+  const lines = s.split("\n");
+  const from = lines.findIndex((l) => l.startsWith('<group id="grp_test"'));
+  const img = lines.findIndex((l) => l.startsWith('<image id="h280c39f37343028d_1_124"'));
+  lines.splice(img + 1, 0, "</group>");
+  lines.splice(from, 0, "<group>");
+  const p = plan(fromApi(structuredClone(r)), parse(lines.join("\n")));
+  assert.deepEqual(kinds(p.requests), ["groupObjects"]);
+  assert.deepEqual((p.requests[0] as any).groupObjects.childrenObjectIds, ["grp_test", "h280c39f37343028d_1_124"]);
+  // Tables can't be grouped: nothing is sent for them, and it says so.
+  const t = text().split("\n");
+  const first = t.findIndex((l) => l.startsWith('<table id="h280c39f37343028d_1_122"'));
+  const last = t.findIndex((l, i) => i > first && l.startsWith('<table id="h280c39f37343028d_1_123"'));
+  const end = t.findIndex((l, i) => i > last && l === "</table>");
+  t.splice(end + 1, 0, "</group>");
+  t.splice(first, 0, "<group>");
+  const tp = plan(remote(), parse(t.join("\n")));
+  assert.deepEqual(tp.requests, []);
+  assert.match(tp.warnings.join(), /can't hold tables/);
+});
+
 test("slides: dropping a group but keeping its children ungroups it", () => {
   const r = structuredClone(raw);
   const slide = r.slides[1];
