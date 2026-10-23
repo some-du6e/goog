@@ -272,7 +272,12 @@ export async function edit(id: string, fileArg: string, opts: EditOptions) {
       if (status === "offline") {
         log("·", "back online");
         lastMsg = "";
-        state("synced", lastHash); // only a synced file goes offline
+        // A push that failed offline is retried now. Otherwise this poll's
+        // failure set offline, and only on a synced file.
+        if (retryAt) {
+          retryAt = Date.now();
+          run();
+        } else state("synced", lastHash);
       }
       if (rev !== readBase(file, id)?.rev) {
         remoteChanged = true;
