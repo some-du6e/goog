@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import {mkdtempSync, readFileSync, writeFileSync} from "node:fs";
+import {spawn} from "node:child_process";
+import {existsSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
@@ -115,14 +116,24 @@ test("bases are per file, so a cat-ed copy doesn't inherit another file's histor
   assert.equal(S.readBase(b), null);
 });
 
-test("state records and listing", () => {
+test("state records and listing", (t) => {
   const f = join(tmp, "s.goog");
-  S.setState(f, {status: "synced", id: ID, pid: process.pid, hash: "h"});
+  // Stand-ins for a watcher (its command line names goog) and for an
+  // unrelated program that got a dead watcher's pid.
+  const keep = "setTimeout(() => {}, 60000)";
+  const watcher = spawn(process.execPath, ["-e", keep, "goog", "edit"], {stdio: "ignore"});
+  const other = spawn(process.execPath, ["-e", keep], {stdio: "ignore"});
+  t.after(() => (watcher.kill(), other.kill()));
+  S.setState(f, {status: "synced", id: ID, pid: watcher.pid!, hash: "h"});
   assert.equal(S.readState(f)?.status, "synced");
   assert.ok(S.watcherOf(f));
   assert.ok(S.listStates().some((s) => s.file === f));
-  S.setState(f, {status: "stopped", id: ID, pid: process.pid});
+  S.setState(f, {status: "stopped", id: ID, pid: watcher.pid!});
   assert.equal(S.watcherOf(f), null);
+  if (existsSync("/proc/self/cmdline")) {
+    S.setState(f, {status: "synced", id: ID, pid: other.pid!, hash: "h"});
+    assert.equal(S.watcherOf(f), null);
+  }
 });
 
 // ---------- push and pull against a fake backend ----------
@@ -186,6 +197,7 @@ test("a save made while push reads the doc isn't overwritten", async () => {
   const r = await S.push(f);
   assert.equal(r.rewrote, false);
   assert.equal(readFileSync(f, "utf8"), doc("one", "two", "3"));
+  assert.equal(r.savedDuring, true);
   // The next push merges both.
   const r2 = await S.push(f);
   assert.equal(r2.status, "pushed");
@@ -203,6 +215,7 @@ test("a save made during a push still counts as unpushed", async () => {
   assert.equal(r.status, "pushed");
   // goog wait compares this with the file: it must not match the newer save.
   assert.equal(r.hash, pushedHash);
+  assert.equal(r.savedDuring, true);
   assert.notEqual(r.hash, S.readText(f).hash);
   assert.equal(readFileSync(f, "utf8"), doc("one", "two", "three"));
   await S.push(f);
@@ -217,4 +230,32 @@ test("a file that's only the header line pushes an empty doc", async () => {
   const r = await S.push(f);
   assert.equal(r.status, "pushed");
   assert.equal(S.bodyOf(remote.text).trim(), "");
+});
+
+test("a save made while the doc is being read stops a conflict being written over it", async () => {
+  const f = fileIn("race-conflict.goog");
+  const remote = fakeDoc(doc("one"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("mine"));
+  remote.text = doc("theirs");
+  remote.during = () => writeFileSync(f, doc("mine, saved again"));
+  const r = await S.push(f);
+  assert.equal(r.savedDuring, true);
+  assert.equal(r.conflicts, 0);
+  assert.equal(readFileSync(f, "utf8"), doc("mine, saved again"));
+});
+
+test("pull leaves a file saved while it reads the doc, and takes an empty file", async () => {
+  const f = fileIn("race-pullonly.goog");
+  const remote = fakeDoc(doc("one"));
+  await S.pull(ID, f, {kind: "doc"});
+  remote.text = doc("one", "from the browser");
+  remote.during = () => writeFileSync(f, doc("one", "my save"));
+  await assert.rejects(S.pull(ID, f, {kind: "doc"}), /saved while the doc was being read/);
+  assert.equal(readFileSync(f, "utf8"), doc("one", "my save"));
+  // An empty file (mktemp, say) has nothing to lose.
+  const e = fileIn("empty.goog");
+  writeFileSync(e, "");
+  await S.pull(ID, e, {kind: "doc"});
+  assert.equal(readFileSync(e, "utf8"), remote.text);
 });

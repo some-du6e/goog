@@ -1417,7 +1417,7 @@ function units(remote: PlanRemote, target: Doc, warnings: string[]): {units: Uni
     segs(r.segments, t.segments ?? [], t.id, dt);
   }
   // Docs needs at least one tab.
-  const survives = target.tabs.some((t) => !t.id || remote.tabs!.some((r) => r.id === t.id));
+  const survives = target.tabs.some((t) => remote.tabs!.some((r) => r.id === t.id));
   for (const r of remote.tabs) {
     if (target.tabs.some((t) => t.id === r.id)) continue;
     if (!survives) {

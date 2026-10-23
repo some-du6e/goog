@@ -49,7 +49,8 @@ goog help                  # everything else
   over the doc as it was when the conflict happened.
 - The first line names the doc. If it's edited to name another doc, or
   deleted, goog refuses to push.
-- `goog pull` won't overwrite unpushed changes unless you pass `--force`.
+- `goog pull` won't overwrite unpushed changes, or a file it never synced that
+  differs from the doc, unless you pass `--force`.
 - A deleted file is never pushed as an empty doc. The watcher waits for the
   file to come back.
 - Blank lines, CRLF line endings, a BOM, and a missing final newline don't

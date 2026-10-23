@@ -171,13 +171,20 @@ export function forgetState(file: string) {
   rmSync(statePath(file), {force: true});
 }
 
+// Whether a watcher's pid is still running goog. A watcher that died without
+// saying so can leave its pid to some other program; where /proc says what a
+// pid runs, that one doesn't count (and goog stop won't kill it).
 export function isAlive(pid: number | undefined): boolean {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch (e: any) {
-    return e?.code === "EPERM";
+    if (e?.code !== "EPERM") return false;
+  }
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("goog");
+  } catch {
+    return true;
   }
 }
 
@@ -288,10 +295,12 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
   let crlf = false;
   let kind = opts.kind;
   let noBase: string | undefined; // the file's text, when it has no base to check it against
+  let raw: string | undefined; // the file as it was checked
   const exists = existsSync(file);
   if (exists) {
     const ft = readText(file);
     crlf = ft.crlf;
+    raw = ft.raw;
     const fh = parseHeader(ft.text);
     if (!kind && fh?.id === id) kind = fh.kind;
     if (!opts.force) {
@@ -304,7 +313,7 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
           dirty = canonBody(ft.text) !== bodyOf(base.text);
         } catch {}
         if (dirty) throw new SyncError(`${file} has changes that aren't in the doc yet; goog push sends them (merging with edits made in the doc), or pass --force to throw them away`);
-      } else noBase = ft.text;
+      } else if (ft.text.trim()) noBase = ft.text;
     }
   }
   const be = backends[await kindOf(id, kind)];
@@ -318,6 +327,9 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
       same = canonBody(noBase) === bodyOf(text);
     } catch {}
     if (!same) throw new SyncError(`${file} already exists, differs from the doc, and goog has no record of syncing it; goog diff ${file} shows the difference, goog push ${file} makes the doc match it, or pass --force to replace it with the doc`);
+  }
+  if (!opts.force && (existsSync(file) ? readText(file).raw : undefined) !== raw) {
+    throw new SyncError(`${file} was saved while the doc was being read; nothing was pulled. goog push sends that save, or pass --force to throw it away`);
   }
   const hash = writeText(file, text, crlf);
   writeBase(file, {id, text, rev: remote.rev});
@@ -338,6 +350,7 @@ export interface PushOutcome {
   conflicts: number;
   warnings: string[];
   hash: string; // hash of the file content as goog left it
+  savedDuring: boolean; // the file was saved again meanwhile: that save isn't in the doc yet
   planned?: unknown[]; // --dry-run: the first batch of requests
   patch?: string; // --dry-run: what would change in the doc, as a unified diff
 }
@@ -372,7 +385,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   const theirs = remote.text;
   const act = reconcile(ours.text, base?.text ?? null, theirs);
   const out: PushOutcome = {
-    file, id, status: "unchanged", dryRun, requests: 0, merged: false, rewrote: false, noBase: !base, conflicts: 0, warnings: [], hash: ours.hash,
+    file, id, status: "unchanged", dryRun, requests: 0, merged: false, rewrote: false, noBase: !base, conflicts: 0, warnings: [], hash: ours.hash, savedDuring: false,
   };
   const save = (text: string, rev?: string) => {
     if (!dryRun) writeBase(file, {id, text, rev});
@@ -386,14 +399,14 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   }
   if (act.action === "pull") {
     if (dryRun) return {...out, status: "pulled", patch: patch(file, headOf(ours.text) + canonBody(ours.text), act.text, "file", "doc")};
-    if (savedSince()) return out;
+    if (savedSince()) return {...out, savedDuring: true};
     out.hash = writeText(file, act.text, ours.crlf);
     save(theirs, remote.rev);
     return {...out, status: "pulled", rewrote: true};
   }
   if (act.action === "conflict") {
     if (dryRun) return {...out, status: "conflict", conflicts: act.conflicts};
-    if (savedSince()) return out;
+    if (savedSince()) return {...out, savedDuring: true};
     out.hash = writeText(file, act.text, ours.crlf);
     // The doc as it is now becomes the base: once the markers are resolved,
     // the resolved file is pushed over it, the way a merge commit works.
@@ -429,6 +442,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     // out.hash stays the pushed content's, so the newer save still counts as
     // unpushed (goog wait keeps waiting, the watcher pushes it next).
     save(headOf(ours.text) + canonBody(ours.text), undefined);
+    out.savedDuring = true;
   }
   return out;
 }

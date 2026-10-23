@@ -52,7 +52,8 @@ Live sync
 
 One-shot
   goog pull <doc> [-o FILE]     download the doc into FILE. Refuses to drop unpushed
-                                changes unless --force
+                                changes, or a file goog never synced that differs
+                                from the doc, unless --force
   goog push <file> [--dry-run]  send the file's changes to the doc once, merging with
                                 edits made in the doc since the last sync
   goog diff <file>              what a push would change in the doc, as a unified diff
@@ -322,7 +323,7 @@ interface FileStatus {
 
 function fileStatus(file: string): FileStatus {
   const s = readState(file);
-  const w = s && s.status !== "stopped" && isAlive(s.pid) ? s : null;
+  const w = watcherOf(file);
   if (!existsSync(file)) return {file, id: s?.id, watching: !!w, pid: w?.pid, status: "missing", unpushed: null, message: "the file doesn't exist"};
   const ft = readText(file);
   if (w) {
@@ -558,6 +559,8 @@ export async function main(argv: string[]) {
       if (r.status === "conflict") process.exitCode = EXIT.conflict;
       if (asJson) return json({ok: r.status !== "conflict", ...r});
       for (const w of r.warnings) out(`warning: ${w}`);
+      const again = `${file} was saved again during the push; that save isn't in the doc yet, so run goog push again`;
+      if (r.savedDuring && r.status === "unchanged") return out(again);
       const dry = r.dryRun;
       if (r.status === "conflict") {
         return out(dry
@@ -575,7 +578,9 @@ export async function main(argv: string[]) {
         out(`would send ${r.requests} edit(s)${r.merged ? ", merged with edits made in the doc" : ""}${r.noBase ? `; ${file} was never synced, so the doc would be made to match it exactly` : ""}`);
         return out(r.patch ?? "");
       }
-      return out(`pushed ${r.requests} edit(s)${notes.length ? `; ${notes.join("; ")}` : ""}`);
+      out(`pushed ${r.requests} edit(s)${notes.length ? `; ${notes.join("; ")}` : ""}`);
+      if (r.savedDuring) out(again);
+      return;
     }
     case "diff": {
       const file = need(pos[0], "goog diff <file>");
