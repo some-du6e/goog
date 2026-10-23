@@ -4,6 +4,7 @@
 //  3. an Apps Script web app you own (`goog auth script`), called through the
 //     signed-in Chrome so it runs as you. No Cloud project needed.
 
+import {createHash, randomBytes} from "node:crypto";
 import {createServer} from "node:http";
 import {join} from "node:path";
 import {withBrowser} from "./browser.ts";
@@ -115,6 +116,10 @@ export async function loginWithClient(client: {client_id: string; client_secret:
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as any).port;
   const redirect = `http://127.0.0.1:${port}`;
+  // state ties the reply to this sign-in, and PKCE makes a code that leaks
+  // useless to anyone else (RFC 8252).
+  const state = randomBytes(16).toString("base64url");
+  const verifier = randomBytes(32).toString("base64url");
   const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
     client_id: client.client_id,
     redirect_uri: redirect,
@@ -122,10 +127,17 @@ export async function loginWithClient(client: {client_id: string; client_secret:
     scope: SCOPES.join(" "),
     access_type: "offline",
     prompt: "consent",
+    state,
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    code_challenge_method: "S256",
   });
   const code = await new Promise<string>((resolve, reject) => {
     server.on("request", (req, res) => {
       const q = new URL(req.url ?? "/", redirect).searchParams;
+      if (q.get("state") !== state) {
+        res.statusCode = 400;
+        return res.end("Not a reply to this goog sign-in.");
+      }
       res.end(q.get("code") ? "goog is signed in. You can close this tab." : `Sign-in failed: ${q.get("error")}`);
       if (q.get("code")) resolve(q.get("code")!);
       else reject(new Error(`Google sign-in failed: ${q.get("error")}`));
@@ -135,7 +147,7 @@ export async function loginWithClient(client: {client_id: string; client_secret:
   server.close();
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
-    body: new URLSearchParams({...client, code, redirect_uri: redirect, grant_type: "authorization_code"}),
+    body: new URLSearchParams({...client, code, code_verifier: verifier, redirect_uri: redirect, grant_type: "authorization_code"}),
   });
   const j: any = await r.json();
   if (!r.ok || !j.refresh_token) throw new Error(`token exchange failed: ${j.error_description ?? j.error ?? "no refresh token"}`);
@@ -153,7 +165,7 @@ export const BROKER_SOURCE = `function doGet() {
 }`;
 
 export const BROKER_MANIFEST = {
-  timeZone: "America/Costa_Rica",
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   exceptionLogging: "STACKDRIVER",
   runtimeVersion: "V8",
   oauthScopes: [...SCOPES, "https://www.googleapis.com/auth/script.external_request"],
