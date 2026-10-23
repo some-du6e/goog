@@ -259,13 +259,21 @@ ${JSON.stringify(BROKER_MANIFEST, null, 2)}
       return;
     }
     const cfg = loadConfig();
+    const before = structuredClone(cfg);
     cfg.broker = arg;
     delete cfg.client;
     saveConfig(cfg);
     forgetToken(); // the cached token came from the old sign-in
     out("saved; checking it works…");
-    await getToken();
-    out("goog auth: OK");
+    let me: any;
+    try {
+      me = await api("GET", `${DRIVE}/about?fields=user(emailAddress)`);
+    } catch (e: any) {
+      saveConfig(before);
+      forgetToken();
+      throw new Error(`${e.message}; went back to the previous sign-in`);
+    }
+    out(`goog auth: OK, signed in as ${me.user.emailAddress}`);
     return;
   }
   if (sub === "import") {
@@ -532,7 +540,7 @@ export async function main(argv: string[]) {
       const ref = resolveRef(need(pos[0], "goog edit <doc> [-o FILE] [--bg]"));
       if (flags.pull && flags.push) throw new Error("pick one of --pull and --push");
       const file = resolve(flags.out ?? ref.file ?? `${ref.id}.goog`);
-      const pollSeconds = Math.max(2, Number(flags.poll ?? loadConfig().pollSeconds ?? 10) || 10);
+      const pollSeconds = Math.max(2, seconds(flags.poll, Number(loadConfig().pollSeconds) || 10, "--poll"));
       const onExisting = flags.pull ? "pull" : flags.push ? "push" : undefined;
       if (flags.bg || flags.background) {
         const extra = ["--poll", String(pollSeconds), ...(onExisting ? [`--${onExisting}`] : [])];
@@ -543,7 +551,7 @@ export async function main(argv: string[]) {
     case "stop":
       return cmdStop(pos[0], asJson);
     case "log":
-      return cmdLog(pos[0], Number(flags.lines ?? 20) || 20, asJson);
+      return cmdLog(pos[0], count(flags.lines, 20, "-n"), asJson);
     case "pull": {
       const ref = resolveRef(need(pos[0], "goog pull <doc> [-o FILE] [--force]"));
       const file = flags.out ?? ref.file ?? `${ref.id}.goog`;
@@ -555,11 +563,12 @@ export async function main(argv: string[]) {
     }
     case "push": {
       const file = need(pos[0], "goog push <file> [--dry-run]");
+      const timeout = seconds(flags.timeout, 120);
       const w = watcherOf(file);
       if (w && !flags["dry-run"]) {
         // Two pushers would race; let the running goog edit do it.
         if (!asJson) out(`goog edit (pid ${w.pid}) is syncing ${file}; waiting for it to push`);
-        return cmdWait(file, seconds(flags.timeout, 120), asJson);
+        return cmdWait(file, timeout, asJson);
       }
       const r = await push(file, {dryRun: flags["dry-run"]});
       if (r.status === "conflict") process.exitCode = EXIT.conflict;
@@ -675,11 +684,17 @@ export async function main(argv: string[]) {
 }
 
 // --timeout 90, 90s or 2m.
-function seconds(v: string | undefined, def: number): number {
+function seconds(v: string | undefined, def: number, flag = "--timeout"): number {
   if (v === undefined) return def;
   const m = /^(\d+(?:\.\d+)?)(s|m)?$/.exec(v.trim());
-  if (!m) throw new Error(`--timeout takes seconds, like 120 or 2m (got "${v}")`);
+  if (!m) throw new Error(`${flag} takes seconds, like 120 or 2m (got "${v}")`);
   return Number(m[1]) * (m[2] === "m" ? 60 : 1);
+}
+
+function count(v: string | undefined, def: number, flag: string): number {
+  if (v === undefined) return def;
+  if (!/^\d+$/.test(v.trim())) throw new Error(`${flag} takes a whole number (got "${v}")`);
+  return Number(v);
 }
 
 function need(v: string | undefined, usage: string): string {
