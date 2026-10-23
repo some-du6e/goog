@@ -88,3 +88,9 @@ test("wait: --timeout takes seconds or minutes, and refuses anything else", () =
   assert.doesNotMatch(ok.stderr + ok.stdout, /--timeout/);
   assert.match(ok.stderr + ok.stdout, /not watched/);
 });
+
+test("log: -n takes a count from 1", () => {
+  const r = goog("log", "-n", "0");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr + r.stdout, /-n takes a whole number from 1/);
+});

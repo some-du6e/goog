@@ -540,7 +540,8 @@ export async function main(argv: string[]) {
       const ref = resolveRef(need(pos[0], "goog edit <doc> [-o FILE] [--bg]"));
       if (flags.pull && flags.push) throw new Error("pick one of --pull and --push");
       const file = resolve(flags.out ?? ref.file ?? `${ref.id}.goog`);
-      const pollSeconds = Math.max(2, seconds(flags.poll, Number(loadConfig().pollSeconds) || 10, "--poll"));
+      // setInterval can't wait longer than about 24 days.
+      const pollSeconds = Math.min(86_400, Math.max(2, seconds(flags.poll, Number(loadConfig().pollSeconds) || 10, "--poll")));
       const onExisting = flags.pull ? "pull" : flags.push ? "push" : undefined;
       if (flags.bg || flags.background) {
         const extra = ["--poll", String(pollSeconds), ...(onExisting ? [`--${onExisting}`] : [])];
@@ -693,7 +694,7 @@ function seconds(v: string | undefined, def: number, flag = "--timeout"): number
 
 function count(v: string | undefined, def: number, flag: string): number {
   if (v === undefined) return def;
-  if (!/^\d+$/.test(v.trim())) throw new Error(`${flag} takes a whole number (got "${v}")`);
+  if (!/^\d+$/.test(v.trim()) || !Number(v)) throw new Error(`${flag} takes a whole number from 1 (got "${v}")`);
   return Number(v);
 }
 

@@ -71,7 +71,8 @@ async function fetchToken(): Promise<Cached> {
         throw new Error(`the Apps Script broker didn't return a token (HTTP ${r.status()}); open ${cfg.broker} in Chrome to check it`);
       }
     });
-    if (!j.token) throw new Error(`the Apps Script broker returned an error: ${j.error ?? JSON.stringify(j)}`);
+    // Only the field names: a reply without `token` may still hold one.
+    if (!j.token) throw new Error(`the Apps Script broker returned an error: ${typeof j.error === "string" ? j.error : `no token (fields: ${Object.keys(j ?? {}).join(", ") || "none"})`}`);
     return {token: j.token, expires: Date.now() + (await lifetime(j.token)), source: "script"};
   }
   throw new Error("goog isn't signed in to Google. Run `goog auth` to set it up.");
