@@ -208,3 +208,34 @@ test("z-order: moving one object to the front is one request", () => {
   assert.deepEqual(r.passes, [[{updatePageElementsZOrder: {pageElementObjectIds: ["aaaaa"], operation: "BRING_TO_FRONT"}}]]);
   assert.deepEqual(now(raw), [...ids.slice(1), "aaaaa"]);
 });
+
+test("an <object> moved out of its group or off a deleted slide isn't deleted", () => {
+  const chart = () => ({objectId: "chart", transform: box("x").transform, size: box("x").size, sheetsChart: {spreadsheetId: "s", chartId: 1}});
+  // Its group (with a box) moves to slide 2.
+  let raw: any = deck(group("ggggg", chart(), box("aaaaa")), box("zzzzz"));
+  raw.slides.push({objectId: "slide2", pageElements: [box("yyyyy")]});
+  let t = text(raw);
+  const block = /<group id="ggggg"[\s\S]*?<\/group>\n/.exec(t)![0];
+  let r = settle(raw, t.replace(block, "").replace(/(<slide id="slide2">\n)/, `$1${block}`));
+  assert.ok(shape(raw).flat(2).some((x: any) => x === "chart" || JSON.stringify(x).includes("chart")), JSON.stringify(shape(raw)));
+  assert.match(r.warnings.join(), /can't move an <object> \(chart\)/);
+  // Its slide is deleted.
+  raw = deck(chart(), box("aaaaa"));
+  raw.slides.push({objectId: "slide2", pageElements: [box("yyyyy")]});
+  t = text(raw);
+  const line = lines(raw, "chart");
+  r = settle(raw, t.replace(/<slide id="slide1">[\s\S]*?<\/slide>\n\n?/, "").replace(/(<slide id="slide2">\n)/, `$1${line}\n`));
+  assert.equal(raw.slides.length, 2);
+  assert.match(r.warnings.join(), /the slide was kept/);
+});
+
+test("groups: a group that can't change doesn't hold up the slide's z-order", () => {
+  const raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")), table("ttttt"), box("ccccc"));
+  const t = text(raw);
+  const tb = /<table id="ttttt"[\s\S]*?<\/table>/.exec(t)![0];
+  const c = lines(raw, "ccccc");
+  const r = settle(raw, t.replace(tb + "\n", "").replace(c + "\n", "").replace('<group id="ggggg"', `${c}\n<group id="ggggg"`).replace("</group>", `${tb}\n</group>`));
+  assert.match(r.warnings.join(), /ggggg can't change/);
+  const order = now(raw).map((x: any) => (typeof x === "string" ? x : Object.keys(x)[0]));
+  assert.ok(order.indexOf("ccccc") < order.indexOf("ggggg"), JSON.stringify(order));
+});

@@ -118,6 +118,8 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     const used = new Set<string>();
     for (const e of s.elements) {
       renew(e);
+      const inside = (x: El): boolean => x.kind === "group" && x.children.some((c) => (c.kind === "shape" && !!c.placeholder) || inside(c));
+      if (inside(e)) warn(`a layout placeholder can't go in a <group>; slide ${s.id}'s grouped one is a plain shape`);
       if (e.kind !== "shape" || !e.placeholder) continue;
       const [type, index = "0"] = e.placeholder.split(":");
       const ph = layout?.placeholders.find((p) => p.type === shout(type) && p.index === Number(index) && !used.has(`${p.type}:${p.index}`));
@@ -137,6 +139,11 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
   }
   for (const rs of remote.slides) {
     if (claimedSlides.has(rs.id)) continue;
+    const kept = (bySlide.get(rs.id) ?? []).find((r) => stuckObjects.has(r.id));
+    if (kept) {
+      warn(`slide ${rs.id} holds an <object> (${kept.id}) the file moved to another slide, which Slides can't do; the slide was kept`);
+      continue;
+    }
     last.push({deleteObject: {objectId: rs.id}});
     arrangement.splice(arrangement.indexOf(rs.id), 1);
   }
@@ -253,8 +260,8 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     };
     const depth = (r: RElement): number => (r.group ? 1 + depth(remote.els.get(r.group)!) : 0);
     const mine = bySlide.get(s.id!) ?? [];
-    const keepsChild = (id: string): boolean => (kidsOf.get(id) ?? []).some((c) => claimedEls.has(c.id) || keepsChild(c.id));
-    const staying = (id: string) => claimedEls.has(id) || keepsChild(id) || stuckObjects.has(id);
+    const staying = (id: string): boolean => claimedEls.has(id) || stuckObjects.has(id) || keepsChild(id);
+    const keepsChild = (id: string): boolean => (kidsOf.get(id) ?? []).some((c) => staying(c.id));
     const groups: {r: RElement; n?: Node}[] = [];
     for (const n of kept) {
       if (!n.r!.raw.elementGroup) continue;
@@ -290,7 +297,7 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
       if (f === "ungroup") reqs.push({ungroupObjects: {objectIds: [id]}});
       if (f === "stuck") warn(why.get(id)!);
     }
-    if (fate.size || dissolving.size) busy = true;
+    if (dissolving.size || [...fate.values()].some((f) => f !== "stuck")) busy = true;
 
     // What the file dropped is deleted. Members of a dropped group that's
     // ungrouped wait until they're top-level.
