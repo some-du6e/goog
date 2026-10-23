@@ -173,8 +173,8 @@ Objects (positions and sizes in points; the slide is usually 720 x 405):
 Changing a deck
   edit text, move or resize (x y w h), recolor (fill, outline), move a line's ends, add
   or delete table rows or columns, write speaker notes, skip or unskip a slide.
-  Delete a line to delete the object or slide; delete a <group> line and its
-  </group> to ungroup what's inside.
+  Delete a line to delete the object or slide; delete a top-level <group> line
+  and its </group> to ungroup what's inside.
   Add: a tag without an id. <shape> and <table> need nothing else;
   <image src="https://…"> needs a picture anyone can open; <video youtube="…">
   or <video drive="FILE_ID">;

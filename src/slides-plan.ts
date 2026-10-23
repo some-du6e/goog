@@ -172,6 +172,11 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
       if (r.slide !== s.id || claimedEls.has(id)) continue;
       if (r.group && !claimedEls.has(r.group)) continue; // goes with (or waits for) its group
       if (r.raw.elementGroup && keepsChild(id)) {
+        // Slides only ungroups top-level groups.
+        if (r.group) {
+          warn(`the group ${id} is inside another group, and Slides can only ungroup top-level groups; it was left as it is`);
+          continue;
+        }
         ungrouped.add(id);
         reqs.unshift({ungroupObjects: {objectIds: [id]}});
       } else reqs.push({deleteObject: {objectId: id}});

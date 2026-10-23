@@ -146,6 +146,14 @@ test("slides: dropping a group but keeping its children ungroups it", () => {
   const unwrap = s.replace(/<group id="grp_test"[^\n]*\n/, "").replace(/<\/group>\n/, "");
   const p = plan(fromApi(structuredClone(r)), parse(unwrap)).requests;
   assert.deepEqual(p, [{ungroupObjects: {objectIds: ["grp_test"]}}]);
+  // A group inside a group can't be ungrouped: it stays, with a warning.
+  const n = structuredClone(r);
+  const [g, ...others] = n.slides[1].pageElements;
+  n.slides[1].pageElements = [{objectId: "outer_test", size: g.size, transform: {scaleX: 1, scaleY: 1, unit: "EMU"}, elementGroup: {children: [g, others[0]]}}, ...others.slice(1)];
+  const ns = serialize(fromApi(structuredClone(n)).deck);
+  const inner = plan(fromApi(structuredClone(n)), parse(ns.replace(/<group id="grp_test"[^\n]*\n/, "").replace(/<\/group>\n/, "")));
+  assert.deepEqual(kinds(inner.requests).filter((k) => k === "ungroupObjects" || k === "deleteObject"), []);
+  assert.match(inner.warnings.join(), /only ungroup top-level groups/);
   // Dropping the whole group still deletes it, children and all.
   const gone = s.replace(/<group id="grp_test"[\s\S]*?<\/group>\n/, "");
   assert.deepEqual(plan(fromApi(structuredClone(r)), parse(gone)).requests, [{deleteObject: {objectId: "grp_test"}}]);
