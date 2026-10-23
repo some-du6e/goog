@@ -162,12 +162,24 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     };
     walk(s.elements);
 
+    // A group the file dropped but kept some of the children of is ungrouped,
+    // not deleted (that would take the children with it). Its children are
+    // diffed, and the ones the file dropped deleted, next pass, once they're
+    // top-level.
+    const keepsChild = (id: string): boolean => [...remote.els.values()].some((c) => c.group === id && (claimedEls.has(c.id) || keepsChild(c.id)));
+    const ungrouped = new Set<string>();
     for (const [id, r] of remote.els) {
       if (r.slide !== s.id || claimedEls.has(id)) continue;
-      if (r.group && !claimedEls.has(r.group)) continue; // goes with its group
-      reqs.push({deleteObject: {objectId: id}});
+      if (r.group && !claimedEls.has(r.group)) continue; // goes with (or waits for) its group
+      if (r.raw.elementGroup && keepsChild(id)) {
+        ungrouped.add(id);
+        reqs.unshift({ungroupObjects: {objectIds: [id]}});
+      } else reqs.push({deleteObject: {objectId: id}});
     }
-    for (const {e, r} of kept) reqs.push(...diffEl(e, r, warn));
+    for (const {e, r} of kept) {
+      if (r.group && ungrouped.has(r.group)) busy = true;
+      else reqs.push(...diffEl(e, r, warn));
+    }
 
     // z-order: file order is back to front.
     if (!busy) {
@@ -399,20 +411,22 @@ function tableOps(e: El & {kind: "table"}, r: RElement, warn: (w: string) => voi
   let changed = false;
   if (have.length !== want.length) {
     changed = true;
-    const ops: any[] = [];
+    const ops: any[][] = [];
     let at = 0;
     for (const part of diffArrays(have.map(key), want.map(key))) {
       if (part.removed) {
-        for (let k = part.count! - 1; k >= 0; k--) ops.push({deleteTableRow: {tableObjectId: id, cellLocation: {rowIndex: at + k}}});
+        const dels: any[] = [];
+        for (let k = part.count! - 1; k >= 0; k--) dels.push({deleteTableRow: {tableObjectId: id, cellLocation: {rowIndex: at + k}}});
+        ops.push(dels);
         at += part.count!;
       } else if (part.added) {
-        ops.push(at > 0
+        ops.push([at > 0
           ? {insertTableRows: {tableObjectId: id, cellLocation: {rowIndex: at - 1}, insertBelow: true, number: part.count}}
-          : {insertTableRows: {tableObjectId: id, cellLocation: {rowIndex: 0}, insertBelow: false, number: part.count}});
+          : {insertTableRows: {tableObjectId: id, cellLocation: {rowIndex: 0}, insertBelow: false, number: part.count}}]);
       } else at += part.count!;
     }
     // Back to front, so earlier row indexes stay put.
-    out.push(...ops.reverse());
+    out.push(...ops.reverse().flat());
   }
   const C0 = have[0]?.length ?? 0;
   const C1 = want[0]?.length ?? 0;

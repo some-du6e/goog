@@ -124,6 +124,33 @@ test("slides: adding, copying, deleting and reordering", () => {
   assert.deepEqual(cs.placeholderIdMappings[0].layoutPlaceholder, {type: "TITLE", index: 0});
 });
 
+test("slides: removing several table rows deletes them back to front", () => {
+  const rows = (reqs: any[]) => reqs.filter((r) => r.deleteTableRow).map((r) => r.deleteTableRow.cellLocation.rowIndex);
+  const drop = (...names: string[]) => (s: string) => names.reduce((t, n) => t.replace(new RegExp(`<tr><td bg="#ead1dc">${n}</td></tr>\\n`), ""), s);
+  // Only the first table (h280c39f37343028d_1_122) has these rows first.
+  const last = planFor(drop("Poverty Rate", "Infant Mortality Rate")).requests;
+  assert.deepEqual(rows(last), [7, 6]);
+  const first = planFor(drop("GDP Per Capita", "Gender Gap Index", "Literacy Rate")).requests;
+  assert.deepEqual(rows(first), [2, 1, 0]);
+  const both = planFor(drop("GDP Per Capita", "Gender Gap Index", "Poverty Rate", "Infant Mortality Rate")).requests;
+  assert.deepEqual(rows(both), [7, 6, 1, 0]);
+});
+
+test("slides: dropping a group but keeping its children ungroups it", () => {
+  const r = structuredClone(raw);
+  const slide = r.slides[1];
+  const [a, b, ...rest] = slide.pageElements;
+  slide.pageElements = [{objectId: "grp_test", size: a.size, transform: {scaleX: 1, scaleY: 1, unit: "EMU"}, elementGroup: {children: [a, b]}}, ...rest];
+  const s = serialize(fromApi(structuredClone(r)).deck);
+  assert.match(s, /<group id="grp_test"/);
+  const unwrap = s.replace(/<group id="grp_test"[^\n]*\n/, "").replace(/<\/group>\n/, "");
+  const p = plan(fromApi(structuredClone(r)), parse(unwrap)).requests;
+  assert.deepEqual(p, [{ungroupObjects: {objectIds: ["grp_test"]}}]);
+  // Dropping the whole group still deletes it, children and all.
+  const gone = s.replace(/<group id="grp_test"[\s\S]*?<\/group>\n/, "");
+  assert.deepEqual(plan(fromApi(structuredClone(r)), parse(gone)).requests, [{deleteObject: {objectId: "grp_test"}}]);
+});
+
 test("slides: format errors point at the problem", () => {
   const s = text();
   assert.throws(() => parse(s.replace("<p align=\"center\">64th</p>\n</shape>", "<p align=\"center\">64th</p>")), (e: any) => e instanceof FormatError && /<shape> on line \d+ is not closed before the <shape>/.test(e.message));
