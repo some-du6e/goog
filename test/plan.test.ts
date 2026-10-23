@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import {parse, serialize} from "../src/format.ts";
 import {fromApi} from "../src/gdocs-read.ts";
-import {normalizeTarget, plan} from "../src/gdocs-plan.ts";
+import {normalizeTarget, plan, ticksDiffer} from "../src/gdocs-plan.ts";
 import {readFileSync, readdirSync} from "node:fs";
 import {pushDoc, toRemote, type DocsIO} from "../src/gdocs.ts";
 import {ApiError} from "../src/google.ts";
@@ -345,6 +345,14 @@ test("a ticked checklist item doesn't warn on the passes after the first", async
   for (const b of first2.doc.blocks) if (b.type === "para" && b.list) b.list.checked = true;
   const r2 = await pushDoc("sim", parse(HEAD + '<li type="check">task</li>\nnew'), {io: io(sim2), first: first2});
   assert.match(r2.warnings.join(), /ticking or unticking/);
+  // A new item the file ticks is created unticked; the backend compares the
+  // doc as it ended up (ticks read by markChecked: none here) with the file.
+  const sim3 = SimDoc.from("old");
+  const target = parse(HEAD + 'old\n<li type="check" checked>new task</li>');
+  const r3 = await pushDoc("sim", target, {io: io(sim3)});
+  assert.equal(pulled(sim3), 'old\n<li type="check">new task</li>');
+  assert.equal(ticksDiffer(r3.remote.doc, target), true);
+  assert.equal(ticksDiffer(r3.remote.doc, parse(HEAD + 'old\n<li type="check">new task</li>')), false);
 });
 
 test("a stale revision is rejected on the first write", async () => {

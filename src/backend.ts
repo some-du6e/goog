@@ -4,7 +4,7 @@
 
 import {parseHeader, parse as parseDoc, serialize as serializeDoc} from "./format.ts";
 import {fetchDoc, fetchRev, markChecked, pushDoc, saveImages} from "./gdocs.ts";
-import {plan as planDoc} from "./gdocs-plan.ts";
+import {CHECKS_WARNING, plan as planDoc, ticksDiffer} from "./gdocs-plan.ts";
 import {DRIVE, api} from "./google.ts";
 import {parse as parseDeck, serialize as serializeDeck} from "./slides-format.ts";
 import {plan as planDeck} from "./slides-plan.ts";
@@ -47,7 +47,9 @@ const docs: Backend = {
   plan: (f, target) => planDoc(f.remote, target),
   async push(id, target, opts) {
     const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote});
-    if (res.requests) await markChecked(id, res.remote.doc);
+    // A new item the file ticks is created unticked; say so, as for any other.
+    if (res.requests && (await markChecked(id, res.remote.doc)) && ticksDiffer(res.remote.doc, target)
+      && !res.warnings.includes(CHECKS_WARNING)) res.warnings.push(CHECKS_WARNING);
     return {fetched: {text: serializeDoc(res.remote.doc), rev: res.remote.doc.rev, remote: res.remote}, requests: res.requests, warnings: res.warnings};
   },
   saveImages: async (f, dir) => ({images: await saveImages((f.remote as any).api, dir)}),

@@ -1451,6 +1451,14 @@ function keysOf(doc: Doc, tabId: string | undefined): Set<string> {
   return out;
 }
 
+// The same checklist items, ticked differently. (Different items are the
+// planner's business; once it's made them, this compares them.)
+export function ticksDiffer(have: Doc, want: Doc): boolean {
+  const a = checks(have);
+  const b = checks(want);
+  return a !== b && a.length === b.length;
+}
+
 export const CHECKS_WARNING = "ticking or unticking checklist items can't be done through the Docs API; tick them in Docs";
 
 export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
@@ -1459,9 +1467,7 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
   const warnings: string[] = [];
   const created: Created[] = [];
   const {units: work, reqs: tabReqs} = units(remote, doc, warnings);
-  if (checks(remote.doc) !== checks(doc) && checks(remote.doc).length === checks(doc).length) {
-    warnings.push(CHECKS_WARNING);
-  }
+  if (ticksDiffer(remote.doc, doc)) warnings.push(CHECKS_WARNING);
   const keep = new Set<string>();
   for (const u of work) collectKeys(u.target, keep);
   const remoteKeys = new Set<string>();

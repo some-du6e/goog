@@ -22,7 +22,7 @@ export async function fetchDoc(id: string): Promise<PlanRemote> {
 // markdown export does ("- [x]"). Its checklist lines are matched to the
 // doc's in order; if the counts differ (a checklist in a table, say), nothing
 // is marked rather than marking the wrong ones.
-export async function markChecked(id: string, doc: Doc) {
+export async function markChecked(id: string, doc: Doc): Promise<boolean> {
   const items: Para[] = [];
   const walk = (blocks: Block[]) => {
     for (const b of blocks) {
@@ -31,18 +31,19 @@ export async function markChecked(id: string, doc: Doc) {
     }
   };
   for (const t of doc.tabs ?? [{blocks: doc.blocks}]) walk(t.blocks);
-  if (!items.length) return;
+  if (!items.length) return true;
   let md: string;
   try {
     md = await api<string>("GET", `${DRIVE}/files/${encodeURIComponent(id)}/export?mimeType=text%2Fmarkdown`, undefined, {text: true});
   } catch {
-    return;
+    return false;
   }
   const ticks = [...md.matchAll(/^[ \t>]*[-*+] \[([ xX])\] /gm)].map((m) => m[1] !== " ");
-  if (ticks.length !== items.length) return;
+  if (ticks.length !== items.length) return false;
   items.forEach((p, k) => {
     if (ticks[k]) p.list!.checked = true;
   });
+  return true;
 }
 
 // Saves each image in the doc as <dir>/<object id>.<ext>, so an agent can look
@@ -126,7 +127,8 @@ export async function pushDoc(
     const p = plan(remote, want);
     opts.onPass?.(p, pass);
     // Only the first read knows which items are ticked (see markChecked), so
-    // only it can tell whether the file ticks differently.
+    // only it can tell whether the file ticks differently; backend.ts checks
+    // the doc as it ended up.
     for (const w of p.warnings) if (!warnings.includes(w) && (pass === 0 || w !== CHECKS_WARNING)) warnings.push(w);
     if (p.pass === "done") return {remote, requests, passes: pass, warnings};
     const sig = JSON.stringify(p.requests);
