@@ -2,7 +2,7 @@ import {spawn} from "node:child_process";
 import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync} from "node:fs";
 import {basename, dirname, join, relative, resolve} from "node:path";
 import {parseArgs} from "node:util";
-import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, getToken, importAuthorizedUser, loginWithClient} from "./auth.ts";
+import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, forgetToken, getToken, importAuthorizedUser, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
@@ -261,6 +261,7 @@ ${JSON.stringify(BROKER_MANIFEST, null, 2)}
     cfg.broker = arg;
     delete cfg.client;
     saveConfig(cfg);
+    forgetToken(); // the cached token came from the old sign-in
     out("saved; checking it works…");
     await getToken();
     out("goog auth: OK");
