@@ -178,3 +178,26 @@ test("synthetic doc: suggestions, TOC, floats, hr, equation, column break, unkno
   assert.equal(parse(ls.join("\n")).name, "weird --> title");
 });
 
+
+test("deleting a tab never takes child tabs the file keeps", () => {
+  const remote = fromApi(load("live-structure"));
+  const text = serialize(remote.doc);
+  const cut = (s: string, id: string) => {
+    const lines = s.split("\n");
+    const a = lines.findIndex((l) => l.startsWith(`<tab id="${id}"`));
+    let b = lines.findIndex((l, i) => i > a && l.startsWith("<tab "));
+    if (b < 0) b = lines.length;
+    lines.splice(a, b - a);
+    return lines.join("\n");
+  };
+  const tabReqs = (p: {requests: unknown[]}) => (p.requests as any[]).filter((r) => r.deleteTab);
+  // Parent dropped, child kept: nothing is deleted, and it says why.
+  const p = plan(remote, parse(cut(text, "t.468c0bxjb9qi")));
+  assert.deepEqual(tabReqs(p), []);
+  assert.match(p.warnings.join(), /"Second tab" wasn't deleted: deleting it would delete "Child tab"/);
+  // Both dropped: one deleteTab, for the parent (the child goes with it).
+  const both = plan(remote, parse(cut(cut(text, "t.ikroufp6fs2q"), "t.468c0bxjb9qi")));
+  assert.deepEqual(tabReqs(both), [{deleteTab: {tabId: "t.468c0bxjb9qi"}}]);
+  // Just the child: deleted on its own.
+  assert.deepEqual(tabReqs(plan(remote, parse(cut(text, "t.ikroufp6fs2q")))), [{deleteTab: {tabId: "t.ikroufp6fs2q"}}]);
+});

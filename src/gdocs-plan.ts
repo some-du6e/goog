@@ -1418,12 +1418,28 @@ function units(remote: PlanRemote, target: Doc, warnings: string[]): {units: Uni
   }
   // Docs needs at least one tab.
   const survives = target.tabs.some((t) => remote.tabs!.some((r) => r.id === t.id));
+  // Deleting a tab deletes its child tabs too.
+  const kept = (id: string) => target.tabs!.some((t) => t.id === id);
+  const parentOf = new Map(remote.tabs.map((r) => [r.id, r.parent]));
+  const ancestors = (id: string) => {
+    const out: string[] = [];
+    for (let p = parentOf.get(id); p && !out.includes(p); p = parentOf.get(p)) out.push(p);
+    return out;
+  };
+  const keptChild = (id: string) => remote.tabs!.find((c) => kept(c.id) && ancestors(c.id).includes(id));
+  const willDelete = (id: string) => !kept(id) && !keptChild(id);
   for (const r of remote.tabs) {
-    if (target.tabs.some((t) => t.id === r.id)) continue;
+    if (kept(r.id)) continue;
     if (!survives) {
       warn("can't delete every tab");
       break;
     }
+    const child = keptChild(r.id);
+    if (child) {
+      warn(`the tab ${JSON.stringify(r.title)} wasn't deleted: deleting it would delete ${JSON.stringify(child.title)}, which the file still has`);
+      continue;
+    }
+    if (ancestors(r.id).some(willDelete)) continue; // goes with its parent
     reqs.push({deleteTab: {tabId: r.id}});
     warn(`deleted the tab ${JSON.stringify(r.title)}, since the file doesn't have it`);
   }
