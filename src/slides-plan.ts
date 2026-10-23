@@ -148,8 +148,10 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
           creating.push({duplicateObject: {objectId: src, objectIds: ids}});
           continue;
         }
-        renew(e);
         if (e.kind === "group") {
+          // Only the group is new: its children keep their ids, so ones that
+          // already exist are grouped rather than made again.
+          if (!e.id || remote.els.has(e.id) || !VALID_ID.test(e.id)) e.id = newId();
           const ready = e.children.every((c) => c.id && remote.els.get(c.id)?.slide === s.id && !remote.els.get(c.id)?.group);
           if (ready && e.children.length >= 2) {
             creating.push({groupObjects: {groupObjectId: e.id, childrenObjectIds: e.children.map((c) => c.id)}});
@@ -157,6 +159,7 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
           } else walk(e.children);
           continue;
         }
+        renew(e);
         creating.push(...create(e, s.id!, warn));
       }
     };

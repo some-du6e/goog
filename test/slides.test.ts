@@ -136,6 +136,20 @@ test("slides: removing several table rows deletes them back to front", () => {
   assert.deepEqual(rows(both), [7, 6, 1, 0]);
 });
 
+test("slides: wrapping existing objects in a new <group> groups them", () => {
+  const s = text();
+  const ids = [...s.matchAll(/<shape id="(h280c39f37343028d_1_(?:59|60))"/g)].map((m) => m[1]);
+  assert.equal(ids.length, 2);
+  const lines = s.split("\n");
+  const a = lines.findIndex((l) => l.includes(`id="${ids[0]}"`));
+  const b = lines.findIndex((l, i) => i > a && l.startsWith("</shape>") && lines.slice(a, i).some((x) => x.includes(`id="${ids[1]}"`)));
+  lines.splice(b + 1, 0, "</group>");
+  lines.splice(a, 0, "<group>");
+  const reqs = plan(remote(), parse(lines.join("\n"))).requests as any[];
+  assert.deepEqual(kinds(reqs), ["groupObjects"]);
+  assert.deepEqual(reqs[0].groupObjects.childrenObjectIds, ids);
+});
+
 test("slides: dropping a group but keeping its children ungroups it", () => {
   const r = structuredClone(raw);
   const slide = r.slides[1];
