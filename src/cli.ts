@@ -558,7 +558,7 @@ export async function main(argv: string[]) {
       if (w && !flags["dry-run"]) {
         // Two pushers would race; let the running goog edit do it.
         if (!asJson) out(`goog edit (pid ${w.pid}) is syncing ${file}; waiting for it to push`);
-        return cmdWait(file, Number(flags.timeout ?? 120), asJson);
+        return cmdWait(file, seconds(flags.timeout, 120), asJson);
       }
       const r = await push(file, {dryRun: flags["dry-run"]});
       if (r.status === "conflict") process.exitCode = EXIT.conflict;
@@ -644,7 +644,7 @@ export async function main(argv: string[]) {
       return;
     }
     case "wait":
-      return cmdWait(pos[0], Number(flags.timeout ?? 120), asJson);
+      return cmdWait(pos[0], seconds(flags.timeout, 120), asJson);
     case "cat": {
       const ref = resolveRef(need(pos[0], "goog cat <doc>"));
       return process.stdout.write((await backends[await kindOf(ref.id, ref.kind)].fetch(ref.id)).text);
@@ -671,6 +671,14 @@ export async function main(argv: string[]) {
     default:
       throw new Error(`unknown command "${cmd}"; run goog help`);
   }
+}
+
+// --timeout 90, 90s or 2m.
+function seconds(v: string | undefined, def: number): number {
+  if (v === undefined) return def;
+  const m = /^(\d+(?:\.\d+)?)(s|m)?$/.exec(v.trim());
+  if (!m) throw new Error(`--timeout takes seconds, like 120 or 2m (got "${v}")`);
+  return Number(m[1]) * (m[2] === "m" ? 60 : 1);
 }
 
 function need(v: string | undefined, usage: string): string {

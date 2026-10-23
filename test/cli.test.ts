@@ -79,3 +79,12 @@ test("skill: hint until installed, then a symlink per agent", () => {
   assert.match(goog("skill", "remove").stdout, /removed from Claude Code/);
   assert.equal(existsSync(join(home, ".claude/skills/goog")), false);
 });
+
+test("wait: --timeout takes seconds or minutes, and refuses anything else", () => {
+  const r = goog("wait", "ok.goog", "--timeout", "30x");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr + r.stdout, /--timeout takes seconds/);
+  const ok = goog("wait", "ok.goog", "--timeout", "2m");
+  assert.doesNotMatch(ok.stderr + ok.stdout, /--timeout/);
+  assert.match(ok.stderr + ok.stdout, /not watched/);
+});
