@@ -66,19 +66,30 @@ test("groups: objects move into and out of an existing group", () => {
   assert.deepEqual(now(raw), [{ggggg: [{new: ["aaaaa", "bbbbb"]}, "ccccc"]}]);
 });
 
-test("groups: a group inside another group can't change, and says so", () => {
-  const raw = deck(group("qqqqq", group("ggggg", box("aaaaa"), box("bbbbb"), box("ccccc")), box("ddddd")));
-  const before = now(raw);
-  const r = settle(raw, file('<group id="qqqqq">', '<group id="ggggg">', "<group>", lines(raw, "aaaaa"), lines(raw, "bbbbb"), "</group>", lines(raw, "ccccc"), "</group>", lines(raw, "ddddd"), "</group>"));
-  assert.deepEqual(r.passes, []);
-  assert.deepEqual(now(raw), before);
-  assert.match(r.warnings.join("\n"), /ggggg is inside another group/);
-  assert.match(r.warnings.join("\n"), /new <group> .* inside another group/);
-  // Nor can one two levels down be ungrouped.
-  const deep = deck(group("qqqqq", group("ooooo", group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc")), box("ddddd")));
-  const d = settle(deep, text(deep).replace(/<group id="ggggg"[^\n]*\n/, "").replace("</group>\n", ""));
-  assert.deepEqual(d.passes, []);
-  assert.match(d.warnings.join("\n"), /ggggg is inside another group, and Slides can only change or ungroup a top-level group/);
+test("groups: a group inside another changes by rebuilding the groups around it", () => {
+  // A new group inside a nested group.
+  let raw = deck(group("qqqqq", group("ggggg", box("aaaaa"), box("bbbbb"), box("ccccc")), box("ddddd")));
+  let r = settle(raw, file('<group id="qqqqq">', '<group id="ggggg">', "<group>", lines(raw, "aaaaa"), lines(raw, "bbbbb"), "</group>", lines(raw, "ccccc"), "</group>", lines(raw, "ddddd"), "</group>"));
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(now(raw), [{qqqqq: [{ggggg: [{new: ["aaaaa", "bbbbb"]}, "ccccc"]}, "ddddd"]}]);
+  // A group two levels down dropped.
+  raw = deck(group("qqqqq", group("ooooo", group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc")), box("ddddd")));
+  r = settle(raw, text(raw).replace(/<group id="ggggg"[^\n]*\n/, "").replace("</group>\n", ""));
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(now(raw), [{qqqqq: [{ooooo: ["aaaaa", "bbbbb", "ccccc"]}, "ddddd"]}]);
+  // Restacking inside a nested group.
+  raw = deck(group("qqqqq", group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc")));
+  r = settle(raw, file('<group id="qqqqq">', '<group id="ggggg">', lines(raw, "bbbbb"), lines(raw, "aaaaa"), "</group>", lines(raw, "ccccc"), "</group>"));
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(now(raw), [{qqqqq: [{ggggg: ["bbbbb", "aaaaa"]}, "ccccc"]}]);
+  // A group that can't change keeps the groups inside it as they are, and says so.
+  raw = deck(group("qqqqq", group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc")), table("ttttt"));
+  const t = text(raw);
+  const tb = /<table id="ttttt"[\s\S]*?<\/table>/.exec(t)![0];
+  r = settle(raw, t.replace(tb + "\n", "").replace(/(<shape id="ccccc"[^\n]*)/, `$1\n${tb}`).replace(/(<shape id="aaaaa"[^\n]*\n)(<shape id="bbbbb"[^\n]*\n)/, "$2$1"));
+  assert.deepEqual(now(raw), [{qqqqq: [{ggggg: ["aaaaa", "bbbbb"]}, "ccccc"]}, "ttttt"]);
+  assert.match(r.warnings.join("\n"), /qqqqq can't change/);
+  assert.match(r.warnings.join("\n"), /ggggg is inside qqqqq, which can't change/);
 });
 
 test("groups: dropping a group's wrapper ungroups it, even inside another group", () => {
@@ -145,15 +156,12 @@ test("groups: a change a group can't take leaves the group as it is", () => {
     assert.deepEqual(now(raw)[0], {ggggg: ["aaaaa", "bbbbb"]});
     assert.match(r.warnings.join(), /the group ggggg can't change/);
   }
-  // An object moved into a group two levels down stays where it was, and so
-  // does everything around it.
+  // An object moved into a group two levels down gets there.
   const raw = deck(group("qqqqq", group("ggggg", group("hhhhh", box("aaaaa"), box("bbbbb")), box("ccccc")), box("ddddd"), box("eeeee")));
-  const before = now(raw);
   const t = text(raw).replace(/(<shape id="ddddd"[^\n]*\n)/, "").replace(/(<shape id="bbbbb"[^\n]*)/, `$1\n${lines(raw, "ddddd")}`);
   const r = settle(raw, t);
-  assert.deepEqual(r.passes, []);
-  assert.deepEqual(now(raw), before);
-  assert.match(r.warnings.join(), /hhhhh is inside another group/);
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(now(raw), [{qqqqq: [{ggggg: [{hhhhh: ["aaaaa", "bbbbb", "ddddd"]}, "ccccc"]}, "eeeee"]}]);
 });
 
 test("groups: members are stacked in the file's order", () => {
@@ -271,4 +279,51 @@ test("groups: more changes a group can't take, and what's kept around them", () 
   const chart = lines(raw, "chart");
   r = settle(raw, t.replace(chart + "\n", "").replace('<slide id="slide2">', `<slide id="slide2">\n${chart}`));
   assert.doesNotMatch(r.warnings.join(), /can't make a new/);
+});
+
+test("groups: each round of fates is decided afresh", () => {
+  // G takes c from H while H gets a table: H is stuck, so G can't take c either.
+  const raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")), group("hhhhh", box("ccccc"), box("ddddd"), box("eeeee")));
+  const r = settle(raw, file('<group id="ggggg">', lines(raw, "bbbbb"), lines(raw, "aaaaa"), lines(raw, "ccccc"), "</group>", '<group id="hhhhh">', lines(raw, "ddddd"), lines(raw, "eeeee"), '<table x="1" y="1">', "<tr><td></td></tr>", "</table>", "</group>"));
+  assert.deepEqual(now(raw), [{ggggg: ["aaaaa", "bbbbb"]}, {hhhhh: ["ccccc", "ddddd", "eeeee"]}]);
+  assert.match(r.warnings.join(), /ggggg can't change/);
+  assert.match(r.warnings.join(), /hhhhh can't change/);
+});
+
+test("groups: deeply nested new groups plan quickly", {timeout: 10_000}, () => {
+  const raw = deck(box("aaaaa"));
+  const depth = 30;
+  const t = file(...Array(depth).fill("<group>"), lines(raw, "aaaaa"), '<table x="1" y="1">', "<tr><td></td></tr>", "</table>", ...Array(depth).fill("</group>"));
+  const start = performance.now();
+  settle(raw, t);
+  assert.ok(performance.now() - start < 2000, `${Math.round(performance.now() - start)}ms`);
+});
+
+test("new ids are valid and unused anywhere in the deck", () => {
+  const raw: any = deck(box("aaaaa"), box("bbbbb"));
+  raw.layouts = [{objectId: "p_lay", pageElements: [{objectId: "lay_title"}]}];
+  const r = settle(raw, file('<group id="g1">', lines(raw, "aaaaa"), lines(raw, "bbbbb"), "</group>", '<shape id="lay_title" type="rectangle"></shape>', '<shape id="p_lay" type="ellipse"></shape>'));
+  assert.equal(r.passes.length > 0, true);
+  assert.equal(now(raw).length, 3);
+});
+
+test("a placeholder added to an existing slide says it's a plain shape", () => {
+  const raw = deck(box("aaaaa"));
+  const r = settle(raw, file(lines(raw, "aaaaa"), '<shape type="text-box" placeholder="title"></shape>'));
+  assert.match(r.warnings.join(), /can only be added with a new <slide>/);
+});
+
+test("an <object> moved onto a new or pasted slide stays where it is", () => {
+  const chart = {objectId: "chart", transform: box("x").transform, size: box("x").size, sheetsChart: {spreadsheetId: "s", chartId: 1}};
+  for (const where of ["new", "pasted"]) {
+    const raw: any = deck(box("aaaaa"), structuredClone(chart));
+    raw.slides.push({objectId: "slide2", pageElements: [box("yyyyy")]});
+    const t = text(raw);
+    const line = lines(raw, "chart");
+    const slide2 = /<slide id="slide2">[\s\S]*?<\/slide>\n/.exec(t)![0];
+    const extra = where === "new" ? `<slide>\n${line}\n</slide>\n` : slide2.replace("</slide>", `${line}\n</slide>`);
+    const r = settle(raw, t.replace(line + "\n", "") + "\n" + extra);
+    assert.ok(JSON.stringify(raw.slides[0].pageElements).includes('"chart"'), where);
+    assert.match(r.warnings.join(), /can't move an <object> \(chart\)/, where);
+  }
 });

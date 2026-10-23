@@ -11,7 +11,8 @@
 // - duplicateObject puts the copy at the front of the slide, at the top level,
 //   even when the original is inside a group. Ids the request doesn't map are
 //   made up.
-// - created objects go in at the front.
+// - created objects go in at the front. A created slide is blank; a copied
+//   slide goes just after the original.
 // - updatePageElementsZOrder only takes top-level objects.
 // - a new object's id (created, grouped or copied) can't be one in use on
 //   any page (slides, layouts, masters, notes) and must be 5-50 of
@@ -54,7 +55,7 @@ function remove(raw: any, h: Hit) {
 
 let made = 0;
 
-export const STRUCTURAL = ["createShape", "createLine", "createImage", "createVideo", "duplicateObject", "deleteObject", "groupObjects", "ungroupObjects", "updatePageElementsZOrder"];
+export const STRUCTURAL = ["createSlide", "createShape", "createLine", "createImage", "createVideo", "duplicateObject", "deleteObject", "groupObjects", "ungroupObjects", "updatePageElementsZOrder"];
 
 function used(raw: any, id: string, k: string) {
   if (!/^[a-zA-Z0-9_][a-zA-Z0-9_\-:]{4,49}$/.test(id)) reject(k, `The object ID (${id}) is not valid.`);
@@ -82,7 +83,23 @@ export function apply(raw: any, requests: any[]) {
         (page.pageElements ??= []).push(e);
         break;
       }
+      case "createSlide":
+        used(raw, v.objectId, k);
+        raw.slides.push({objectId: v.objectId, pageElements: []});
+        break;
       case "duplicateObject": {
+        const at = raw.slides.findIndex((s: any) => s.objectId === v.objectId);
+        if (at >= 0) {
+          const copy = structuredClone(raw.slides[at]);
+          const rename = (x: any) => {
+            x.objectId = v.objectIds?.[x.objectId] ?? `SLIDES_API${made++}`;
+            x.elementGroup?.children.forEach(rename);
+          };
+          rename(copy);
+          (copy.pageElements ?? []).forEach(rename);
+          raw.slides.splice(at + 1, 0, copy);
+          break;
+        }
         const h = find(raw, v.objectId) ?? reject(k, `The object (${v.objectId}) could not be found.`);
         const copy = structuredClone(h.list[h.i]);
         const rename = (x: any) => {
@@ -144,7 +161,7 @@ export function shape(raw: any, slide = 0): any[] {
 // Pushes `file` to `raw` the way pushDeck does, pass by pass, until a pass
 // plans nothing structural. Throws if Slides would reject a pass, or if it
 // doesn't settle.
-export function settle(raw: any, file: string, maxPasses = 6): {passes: any[][]; warnings: string[]; text: string} {
+export function settle(raw: any, file: string, maxPasses = 20): {passes: any[][]; warnings: string[]; text: string} {
   const want: Deck = parse(file);
   const passes: any[][] = [];
   const warnings: string[] = [];

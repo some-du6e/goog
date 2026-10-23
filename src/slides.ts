@@ -40,7 +40,9 @@ export interface DeckPushResult {
   warnings: string[];
 }
 
-const MAX_PASSES = 8;
+// A group nested n deep takes about 2n passes to change; a pass that repeats
+// the last one stops the push sooner.
+const MAX_PASSES = 20;
 
 // Edits the deck until it matches `target`, guarding each write with the
 // revision it was planned against (see pushDoc in gdocs.ts).

@@ -62,6 +62,7 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
   // An object pasted from elsewhere becomes a new one made from the file.
   const renew = (e: El) => {
     const src = e.id ? remote.els.get(e.id) : undefined;
+    if (e.kind === "object" && src) return; // can't be made: it stays where it is, under its id (see stuckObjects)
     if (e.kind === "image" && !e.src && src?.raw.image?.contentUrl) e.src = src.raw.image.contentUrl;
     e.id = fresh(e.id);
     if (e.kind === "group") e.children.forEach(renew);
@@ -215,6 +216,7 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
           return {e, kids: match(e.children)};
         }
         renew(e);
+        if (e.kind === "shape" && e.placeholder) warn(`a layout placeholder can only be added with a new <slide>; slide ${s.id}'s new placeholder="${e.placeholder}" is a plain shape`);
         const made = create(e, s.id!, warn);
         if (made.length) busy = true;
         creating.push(...made);
@@ -277,26 +279,31 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     // A group the file dropped but kept some of the members of is ungrouped,
     // not deleted (that would take the members with it).
     for (const r of mine) if (!claimedEls.has(r.id) && r.raw.elementGroup && keepsChild(r.id)) groups.push({r});
-    // Every group starts out leaving, and each round decides every group from
-    // the last round's fates; a group only stops leaving, so this settles on
-    // the most that can be done (two groups swapping members both regroup).
-    for (const {r} of groups) fate.set(r.id, r.group ? "wait" : "ungroup");
-    for (let round = 0; round <= groups.length + 1; round++) {
+    // A group inside another changes by taking apart the groups around it, one
+    // level a pass, and making each again under its id: a group that waits
+    // makes its parent leave too. A group goes stuck only when it can't be
+    // made again (or its parent can't).
+    // Every changed group starts out leaving, and each round decides every
+    // group from the last round's fates, until they stop changing (two
+    // groups swapping members both regroup).
+    for (const {r, n} of groups) if (!n || changes(n).changed) fate.set(r.id, r.group ? "wait" : "ungroup");
+    for (let round = 0; round <= 2 * groups.length + 2; round++) {
       const was = JSON.stringify([...fate, ...frozen]);
       const now = new Map<string, "ungroup" | "wait" | "stuck">();
       const next = new Map<string, string>();
       memo.clear();
       for (const {r, n} of groups) {
-        const c = n && changes(n);
-        if (c && !c.changed) continue;
+        const c = n ? changes(n) : {moved: [], changed: true};
+        const forced = (kidsOf.get(r.id) ?? []).some((k) => fate.get(k.id) === "wait");
+        if (!c.changed && !forced) continue;
         // One member left is no group at all, so it's fine to take apart.
         const reason = n && blocked(n, r.id);
         const real = reason && reason !== TOO_FEW ? reason : undefined;
-        const nested = r.group && !leaving(r.group);
-        if (nested || real) {
+        const under = r.group && fate.get(r.group) === "stuck";
+        if (real || under) {
           now.set(r.id, "stuck");
-          why.set(r.id, nested ? `the group ${r.id} is inside another group, and Slides can only change or ungroup a top-level group; it was left as it is` : `the group ${r.id} can't change: a group ${real}; it was left as it is`);
-          for (const id of c?.moved ?? []) next.set(id, r.id);
+          why.set(r.id, real ? `the group ${r.id} can't change: a group ${real}; it was left as it is` : `the group ${r.id} is inside ${r.group}, which can't change, so it was left as it is too`);
+          for (const id of c.moved) next.set(id, r.id);
         } else now.set(r.id, r.group ? "wait" : "ungroup");
       }
       fate.clear();
