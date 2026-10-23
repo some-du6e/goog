@@ -220,7 +220,7 @@ export function layoutNote(layouts: Layout[]): string | undefined {
   const named = layouts.filter((l) => l.name !== l.id);
   if (!named.length) return undefined;
   const names = named.map((l) => (l.title && kebab(l.title).replace(/ /g, "-") !== l.name ? `${l.name} (${l.title})` : l.name));
-  return `<!-- layouts for new slides: ${names.join(", ").replace(/--/g, "- -")} -->`;
+  return `<!-- layouts for new slides: ${names.join(", ").replace(/-(?=-)/g, "- ")} -->`;
 }
 
 export function header(deck: Deck): string {

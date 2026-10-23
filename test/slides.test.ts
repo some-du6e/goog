@@ -208,3 +208,8 @@ test("slides: format errors point at the problem", () => {
   assert.throws(() => parse(s.replace("<p align=\"center\">64th</p>", "<h1>64th</h1>")), /no <h1>/);
   assert.throws(() => parse(s.replace('fill="#073763"', 'fill="blurple"')), /theme color/);
 });
+
+test("a layout named with dashes and > still gives a file that parses", () => {
+  const s = serialize({kind: "slides", id: "d", slides: [{elements: [], notes: []}], layouts: [{id: "p1", name: "custom-1", title: "Arrows --->", placeholders: []}]} as any);
+  assert.equal(serialize(parse(s)), s);
+});

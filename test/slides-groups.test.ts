@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import {serialize} from "../src/slides-format.ts";
+import {parse, serialize} from "../src/slides-format.ts";
+import {plan} from "../src/slides-plan.ts";
 import {fromApi} from "../src/slides-read.ts";
 import {settle, shape} from "./slides-sim.ts";
 
@@ -290,6 +291,19 @@ test("groups: each round of fates is decided afresh", () => {
   assert.match(r.warnings.join(), /hhhhh can't change/);
 });
 
+test("groups: a group stuck inside a stuck parent stays stuck, whatever else is on the slide", () => {
+  // P holds a table, so G (inside it) can't change; b's move still goes out.
+  for (const extra of [[], [group("hhhhh", box("ccccc"), box("ddddd"))]]) {
+    const raw = deck(group("ppppp", group("ggggg", box("aaaaa"), box("bbbbb")), table("ttttt")), ...extra);
+    const L = text(raw).split("\n");
+    const a = L.findIndex((l) => l.includes('id="aaaaa"'));
+    [L[a], L[a + 1]] = [L[a + 1].replace('x="10"', 'x="99"'), L[a]];
+    const p = plan(fromApi(structuredClone(raw)), parse(L.join("\n")));
+    assert.ok(p.requests.some((q) => q.updatePageElementTransform?.objectId === "bbbbb"), JSON.stringify(p.requests));
+    assert.match(p.warnings.join(), /ggggg is inside ppppp/);
+  }
+});
+
 test("groups: deeply nested new groups plan quickly", {timeout: 10_000}, () => {
   const raw = deck(box("aaaaa"));
   const depth = 30;
@@ -326,4 +340,20 @@ test("an <object> moved onto a new or pasted slide stays where it is", () => {
     assert.ok(JSON.stringify(raw.slides[0].pageElements).includes('"chart"'), where);
     assert.match(r.warnings.join(), /can't move an <object> \(chart\)/, where);
   }
+});
+
+test("an <object> pasted onto another slide while kept on its own says it isn't copied", () => {
+  const raw: any = deck(box("aaaaa"), {objectId: "chart", transform: box("x").transform, size: box("x").size, sheetsChart: {spreadsheetId: "s", chartId: 1}});
+  raw.slides.push({objectId: "slide2", pageElements: [box("bbbbb")]});
+  const r = settle(raw, text(raw).replace(/(<shape id="bbbbb"[^\n]*)/, `$1\n${lines(raw, "chart")}`));
+  assert.match(r.warnings.join(), /can't copy an <object> \(chart\)/);
+});
+
+test("a placeholder a new slide's layout lacks gets one warning", () => {
+  const raw: any = deck(box("aaaaa"));
+  raw.layouts = [{objectId: "lay1", layoutProperties: {name: "BLANK", displayName: "Blank"}, pageElements: []}];
+  const r = settle(raw, text(raw) + '\n<slide layout="BLANK">\n<shape type="text-box" placeholder="title">\nHi\n</shape>\n<group>\n<shape type="text-box" placeholder="body"></shape>\n<shape type="rectangle"></shape>\n</group>\n</slide>\n');
+  assert.match(r.warnings.join(), /has no title placeholder/);
+  assert.match(r.warnings.join(), /can't go in a <group>/);
+  assert.doesNotMatch(r.warnings.join(), /can only be added with a new <slide>/);
 });

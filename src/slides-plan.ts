@@ -81,11 +81,13 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
   // goog can't make an <object> (a chart, say), so one the file moves to
   // another slide stays where it is.
   const stuckObjects = new Set<string>();
+  const homeObjects = new Set<string>(); // ones the file keeps on their own slide
   const objects = (els: El[], slide?: string) => {
     for (const e of els) {
       if (e.kind === "group") objects(e.children, slide);
       const r = e.kind === "object" && e.id ? remote.els.get(e.id) : undefined;
       if (r && r.slide !== slide) stuckObjects.add(r.id);
+      if (r && r.slide === slide) homeObjects.add(r.id);
     }
   };
   for (const s of want.slides) objects(s.elements, s.id);
@@ -119,13 +121,24 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     const used = new Set<string>();
     for (const e of s.elements) {
       renew(e);
-      const inside = (x: El): boolean => x.kind === "group" && x.children.some((c) => (c.kind === "shape" && !!c.placeholder) || inside(c));
-      if (inside(e)) warn(`a layout placeholder can't go in a <group>; slide ${s.id}'s grouped one is a plain shape`);
+      // One that can't be a placeholder is made as a plain shape later; it
+      // loses the attribute so it isn't warned about again there.
+      let grouped = false;
+      const plain = (x: El) => {
+        if (x.kind !== "group") return;
+        for (const c of x.children) {
+          if (c.kind === "shape" && c.placeholder) (grouped = true), delete c.placeholder;
+          plain(c);
+        }
+      };
+      plain(e);
+      if (grouped) warn(`a layout placeholder can't go in a <group>; slide ${s.id}'s grouped one is a plain shape`);
       if (e.kind !== "shape" || !e.placeholder) continue;
       const [type, index = "0"] = e.placeholder.split(":");
       const ph = layout?.placeholders.find((p) => p.type === shout(type) && p.index === Number(index) && !used.has(`${p.type}:${p.index}`));
       if (!ph) {
         warn(`layout ${layout?.name ?? "(default)"} has no ${e.placeholder} placeholder; added a plain ${e.type} instead`);
+        delete e.placeholder;
         continue;
       }
       used.add(`${ph.type}:${ph.index}`);
@@ -208,7 +221,12 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
             return {e, copy: r, kids: []};
           }
         }
-        if (r && r.slide !== s.id && e.kind === "object") return {e, kids: []}; // stays on its own slide; see `stuckObjects`
+        if (r && r.slide !== s.id && e.kind === "object") {
+          // It stays on its own slide (see `stuckObjects`); one moved away is
+          // warned about there, one copied here.
+          if (homeObjects.has(r.id)) warn(`Slides can't copy an <object> (${r.id}); slide ${s.id} doesn't get one`);
+          return {e, kids: []};
+        }
         if (e.kind === "group") {
           // Only the group is new: its members keep their ids, so ones that
           // already exist are grouped rather than made again.
@@ -295,14 +313,17 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
       for (const {r, n} of groups) {
         const c = n ? changes(n) : {moved: [], changed: true};
         const forced = (kidsOf.get(r.id) ?? []).some((k) => fate.get(k.id) === "wait");
-        if (!c.changed && !forced) continue;
+        // Stuck stays stuck: otherwise a stuck parent frees the child that
+        // forced it, which forces it again, round after round.
+        const was = fate.get(r.id) === "stuck";
+        if (!c.changed && !forced && !was) continue;
         // One member left is no group at all, so it's fine to take apart.
         const reason = n && blocked(n, r.id);
         const real = reason && reason !== TOO_FEW ? reason : undefined;
         const under = r.group && fate.get(r.group) === "stuck";
-        if (real || under) {
+        if (real || under || was) {
           now.set(r.id, "stuck");
-          why.set(r.id, real ? `the group ${r.id} can't change: a group ${real}; it was left as it is` : `the group ${r.id} is inside ${r.group}, which can't change, so it was left as it is too`);
+          if (!was) why.set(r.id, real ? `the group ${r.id} can't change: a group ${real}; it was left as it is` : `the group ${r.id} is inside ${r.group}, which can't change, so it was left as it is too`);
           for (const id of c.moved) next.set(id, r.id);
         } else now.set(r.id, r.group ? "wait" : "ungroup");
       }
