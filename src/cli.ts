@@ -175,11 +175,12 @@ Changing a deck
   edit text, move or resize (x y w h), recolor (fill, outline), move a line's ends, add
   or delete table rows or columns (at the right edge), write speaker notes, skip
   or unskip a slide.
-  Delete a line to delete the object or slide; delete a top-level <group> line
-  and its </group> to ungroup what's inside.
-  Group: wrap two or more objects in <group>…</group>, or move objects into or
-  out of a top-level group. Groups can't hold tables, videos or layout
-  placeholders, and a group inside another group can't change.
+  Delete a line to delete the object or slide; delete a <group> line and its
+  </group> to ungroup what's inside.
+  Group: wrap two or more objects in <group>…</group>. Move lines to add,
+  remove or restack a top-level group's members, including groups inside it.
+  A group further down can't change (goog warns). Groups can't hold tables,
+  videos or layout placeholders.
   Add: a tag without an id. <shape> and <table> need nothing else;
   <image src="https://…"> needs a picture anyone can open; <video youtube="…">
   or <video drive="FILE_ID">;

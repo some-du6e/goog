@@ -13,6 +13,7 @@
 //   made up.
 // - created objects go in at the front.
 // - updatePageElementsZOrder only takes top-level objects.
+// - a new object's id (created, grouped or copied) can't be one in use.
 // Everything else (text, styles, transforms) is left alone; `settle` stops
 // once a pass plans none of the requests above.
 
@@ -53,9 +54,16 @@ let made = 0;
 
 export const STRUCTURAL = ["createShape", "createLine", "createImage", "createVideo", "duplicateObject", "deleteObject", "groupObjects", "ungroupObjects", "updatePageElementsZOrder"];
 
+function used(raw: any, id: string, k: string) {
+  if (find(raw, id) || raw.slides.some((s: any) => s.objectId === id)) reject(k, `The object ID (${id}) should be unique among all pages and page elements.`);
+}
+
 export function apply(raw: any, requests: any[]) {
   for (const q of requests) {
     const [k, v] = Object.entries(q)[0] as [string, any];
+    if (k.startsWith("create")) used(raw, v.objectId, k);
+    if (k === "groupObjects") used(raw, v.groupObjectId, k);
+    if (k === "duplicateObject") for (const id of Object.values(v.objectIds ?? {}) as string[]) used(raw, id, k);
     switch (k) {
       case "createShape":
       case "createLine":

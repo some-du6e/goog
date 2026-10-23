@@ -80,7 +80,9 @@ Observed live; the code depends on each:
   adds to or takes from an existing group, so the planner ungroups a changed
   top-level group and groups it again under the same id next pass. Deleting a
   group's members down to one dissolves the group. A copy of an object in a
-  group lands at the top level, in front.
+  group lands at the top level, in front. Members keep their stacking order
+  whatever order groupObjects lists them in, and updatePageElementsZOrder
+  refuses grouped objects, so the planner restacks members before grouping.
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.

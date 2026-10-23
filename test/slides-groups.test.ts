@@ -20,6 +20,7 @@ const deck = (...pageElements: any[]) => ({
   pageSize: {width: {magnitude: 9144000, unit: "EMU"}, height: {magnitude: 5143500, unit: "EMU"}},
   slides: [{objectId: "slide1", pageElements}],
 });
+const table = (id: string) => ({objectId: id, transform: box(id).transform, table: {rows: 1, columns: 1, tableRows: [{tableCells: [{}]}]}});
 const text = (raw: any) => serialize(fromApi(structuredClone(raw)).deck);
 // A shape's lines in the file, by id.
 const lines = (raw: any, id: string) => text(raw).split("\n").find((l) => l.includes(`id="${id}"`))!;
@@ -77,7 +78,7 @@ test("groups: a group inside another group can't change, and says so", () => {
   const deep = deck(group("qqqqq", group("ooooo", group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc")), box("ddddd")));
   const d = settle(deep, text(deep).replace(/<group id="ggggg"[^\n]*\n/, "").replace("</group>\n", ""));
   assert.deepEqual(d.passes, []);
-  assert.match(d.warnings.join("\n"), /ggggg is inside another group, and Slides can only ungroup top-level groups/);
+  assert.match(d.warnings.join("\n"), /ggggg is inside another group, and Slides can only change or ungroup a top-level group/);
 });
 
 test("groups: dropping a group's wrapper ungroups it, even inside another group", () => {
@@ -132,4 +133,78 @@ test("groups: a new group pasted twice makes two groups", () => {
   const out = now(raw);
   assert.equal(out.length, 2);
   for (const x of out) assert.equal(Object.values(x as object)[0].length, 2);
+});
+
+test("groups: a change a group can't take leaves the group as it is", () => {
+  // A table moved in, or a new image goog can't make.
+  for (const extra of [(t: string) => /<table id="ttttt"[\s\S]*?<\/table>/.exec(t)![0], () => '<image x="1" y="1" w="10" h="10">']) {
+    const raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")), table("ttttt"));
+    const t = text(raw);
+    const r = settle(raw, t.replace(/<table id="ttttt"[\s\S]*?<\/table>\n/, "").replace("</group>", `${extra(t)}\n</group>`));
+    assert.ok(!r.passes.flat().some((q) => q.ungroupObjects), JSON.stringify(r.passes));
+    assert.deepEqual(now(raw)[0], {ggggg: ["aaaaa", "bbbbb"]});
+    assert.match(r.warnings.join(), /the group ggggg can't change/);
+  }
+  // An object moved into a group two levels down stays where it was, and so
+  // does everything around it.
+  const raw = deck(group("qqqqq", group("ggggg", group("hhhhh", box("aaaaa"), box("bbbbb")), box("ccccc")), box("ddddd"), box("eeeee")));
+  const before = now(raw);
+  const t = text(raw).replace(/(<shape id="ddddd"[^\n]*\n)/, "").replace(/(<shape id="bbbbb"[^\n]*)/, `$1\n${lines(raw, "ddddd")}`);
+  const r = settle(raw, t);
+  assert.deepEqual(r.passes, []);
+  assert.deepEqual(now(raw), before);
+  assert.match(r.warnings.join(), /hhhhh is inside another group/);
+});
+
+test("groups: members are stacked in the file's order", () => {
+  let raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")));
+  settle(raw, file('<group id="ggggg">', lines(raw, "bbbbb"), lines(raw, "aaaaa"), "</group>"));
+  assert.deepEqual(now(raw), [{ggggg: ["bbbbb", "aaaaa"]}]);
+  raw = deck(box("aaaaa"), box("bbbbb"), box("ccccc"));
+  settle(raw, file("<group>", lines(raw, "bbbbb"), lines(raw, "aaaaa"), "</group>", lines(raw, "ccccc")));
+  assert.deepEqual(now(raw), [{new: ["bbbbb", "aaaaa"]}, "ccccc"]);
+});
+
+test("groups: a new group that can't be made gives its members to the group around it", () => {
+  // Deleting one of two members dissolves the inner group; the outer one stays.
+  let raw = deck(group("qqqqq", group("ggggg", box("aaaaa"), box("bbbbb")), box("ccccc")));
+  let r = settle(raw, text(raw).replace(/<shape id="bbbbb"[^\n]*\n/, ""));
+  assert.deepEqual(now(raw), [{qqqqq: ["aaaaa", "ccccc"]}]);
+  assert.match(r.warnings.join(), /needs at least two objects/);
+  raw = deck(box("aaaaa"), box("bbbbb"));
+  r = settle(raw, file("<group>", "<group>", lines(raw, "aaaaa"), "</group>", lines(raw, "bbbbb"), "</group>"));
+  assert.deepEqual(now(raw), [{new: ["aaaaa", "bbbbb"]}]);
+});
+
+test("groups: pasting an existing group again copies it without a warning", () => {
+  const raw = deck(group("ggggg", box("aaaaa"), box("bbbbb")));
+  const g = text(raw).split("\n").slice(3, -2);
+  const r = settle(raw, file(...g, ...g));
+  assert.deepEqual(r.warnings, []);
+  assert.equal(now(raw).length, 2);
+});
+
+test("groups: ids the file repeats, or that the deck uses, aren't reused", () => {
+  const raw = deck(box("aaaaa"), box("bbbbb"), box("ccccc"), box("ddddd"));
+  const g = (a: string, b: string, id: string) => [`<group id="${id}">`, lines(raw, a), lines(raw, b), "</group>"];
+  settle(raw, file(...g("aaaaa", "bbbbb", "mygroup"), ...g("ccccc", "ddddd", "mygroup"), '<shape id="myshape" type="rectangle"></shape>', '<shape id="myshape" type="rectangle"></shape>', '<shape id="slide1" type="rectangle"></shape>'));
+  assert.equal(now(raw).length, 5);
+});
+
+test("an <object> moved to another slide stays where it is", () => {
+  const raw: any = deck(box("aaaaa"), {objectId: "chart", transform: box("x").transform, size: box("x").size, sheetsChart: {spreadsheetId: "s", chartId: 1}});
+  raw.slides.push({objectId: "slide2", pageElements: []});
+  const t = text(raw);
+  const chart = lines(raw, "chart");
+  const r = settle(raw, t.replace(chart + "\n", "").replace('<slide id="slide2">', `<slide id="slide2">\n${chart}`));
+  assert.deepEqual(now(raw), ["aaaaa", "chart"]);
+  assert.match(r.warnings.join(), /can't move an <object> \(chart\)/);
+});
+
+test("z-order: moving one object to the front is one request", () => {
+  const ids = ["aaaaa", "bbbbb", "ccccc", "ddddd", "eeeee"];
+  const raw = deck(...ids.map((id) => box(id)));
+  const r = settle(raw, file(...ids.slice(1).map((id) => lines(raw, id)), lines(raw, "aaaaa")));
+  assert.deepEqual(r.passes, [[{updatePageElementsZOrder: {pageElementObjectIds: ["aaaaa"], operation: "BRING_TO_FRONT"}}]]);
+  assert.deepEqual(now(raw), [...ids.slice(1), "aaaaa"]);
 });
