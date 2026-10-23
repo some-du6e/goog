@@ -238,11 +238,18 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     // Why `n` can't be made (or, for an existing group `home`, made again),
     // if it can't. Members from inside `home` are fine: ungrouping it frees them.
     const within = (id: string | undefined, home?: string): boolean => !!id && !!home && (id === home || within(remote.els.get(id)?.group, home));
+    const memo = new Map<string, string | undefined>(); // blocked(), per node and home, for this round's fates
+    const nodeKey = new Map<Node, number>();
     const blocked = (n: Node, home?: string): string | undefined => {
+      const key = `${nodeKey.get(n) ?? nodeKey.set(n, nodeKey.size).get(n)} ${home ?? ""}`;
+      if (!memo.has(key)) memo.set(key, blocking(n, home));
+      return memo.get(key);
+    };
+    const blocking = (n: Node, home?: string): string | undefined => {
       const kids = members(n, home);
       const src = (k: Node) => k.r ?? k.copy;
       if (kids.some((k) => (src(k) ? !groupable(src(k)!) : k.e.kind === "table" || k.e.kind === "video"))) return "can't hold tables, videos or layout placeholders";
-      if (kids.length < 2) return "needs at least two objects";
+      if (kids.length < 2) return TOO_FEW;
       if (kids.some((k) => k.r?.group && !within(k.r.group, home) && !leaving(k.r.group))) return "can't take objects that are inside another group";
       if (kids.some((k) => !src(k) && !isNew(k) && !k.made)) return "holds an object goog couldn't make";
     };
@@ -272,27 +279,35 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
     // not deleted (that would take the members with it).
     for (const r of mine) if (!claimedEls.has(r.id) && r.raw.elementGroup && keepsChild(r.id)) groups.push({r});
     groups.sort((a, b) => depth(a.r) - depth(b.r));
-    // Outside in, until nothing changes: a group's fate depends on its parent's,
-    // and on the groups its new members come from.
-    for (let round = 0; round < 8; round++) {
+    // Every group starts out leaving, and each round decides every group from
+    // the last round's fates; a group only stops leaving, so this settles on
+    // the most that can be done (two groups swapping members both regroup).
+    for (const {r} of groups) fate.set(r.id, r.group ? "wait" : "ungroup");
+    for (let round = 0; round <= groups.length + 1; round++) {
       const was = JSON.stringify([...fate, ...frozen]);
+      const now = new Map<string, "ungroup" | "wait" | "stuck">();
       const next = new Map<string, string>();
+      memo.clear();
       for (const {r, n} of groups) {
-        fate.delete(r.id);
         const c = n && changes(n);
         if (c && !c.changed) continue;
-        const reason = r.group ? undefined : n && blocked(n, r.id);
-        if (r.group && leaving(r.group)) fate.set(r.id, "wait");
-        else if (r.group || reason) {
-          fate.set(r.id, "stuck");
-          why.set(r.id, reason ? `the group ${r.id} can't change: a group ${reason}; it was left as it is` : `the group ${r.id} is inside another group, and Slides can only change or ungroup a top-level group; it was left as it is`);
+        // One member left is no group at all, so it's fine to take apart.
+        const reason = n && blocked(n, r.id);
+        const real = reason && reason !== TOO_FEW ? reason : undefined;
+        const nested = r.group && !leaving(r.group);
+        if (nested || real) {
+          now.set(r.id, "stuck");
+          why.set(r.id, nested ? `the group ${r.id} is inside another group, and Slides can only change or ungroup a top-level group; it was left as it is` : `the group ${r.id} can't change: a group ${real}; it was left as it is`);
           for (const id of c?.moved ?? []) next.set(id, r.id);
-        } else fate.set(r.id, "ungroup");
+        } else now.set(r.id, r.group ? "wait" : "ungroup");
       }
+      fate.clear();
+      for (const [id, f] of now) fate.set(id, f);
       frozen.clear();
       for (const [id, g] of next) frozen.set(id, g);
       if (JSON.stringify([...fate, ...frozen]) === was) break;
     }
+    memo.clear();
     for (const [id, f] of fate) {
       if (f === "ungroup") reqs.push({ungroupObjects: {objectIds: [id]}});
       if (f === "stuck") warn(why.get(id)!);
@@ -362,6 +377,8 @@ export function plan(remote: RemoteDeck, want: Deck): SPlan {
 
   return {requests: [...first, ...elementReqs, ...last], warnings};
 }
+
+const TOO_FEW = "needs at least two objects";
 
 // What groupObjects takes: Slides refuses tables, videos and placeholders.
 const groupable = (r: RElement) => !(r.raw.table || r.raw.video || r.raw.shape?.placeholder || r.raw.image?.placeholder);

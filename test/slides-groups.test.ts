@@ -239,3 +239,13 @@ test("groups: a group that can't change doesn't hold up the slide's z-order", ()
   const order = now(raw).map((x: any) => (typeof x === "string" ? x : Object.keys(x)[0]));
   assert.ok(order.indexOf("ccccc") < order.indexOf("ggggg"), JSON.stringify(order));
 });
+
+test("groups: two groups swap members, and a nested pair losing one member dissolves", () => {
+  let raw = deck(group("g0000", box("aaaaa"), box("bbbbb")), group("g1111", box("ccccc"), box("ddddd")));
+  let r = settle(raw, file('<group id="g0000">', lines(raw, "aaaaa"), lines(raw, "ccccc"), "</group>", '<group id="g1111">', lines(raw, "bbbbb"), lines(raw, "ddddd"), "</group>"));
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(now(raw), [{g0000: ["aaaaa", "ccccc"]}, {g1111: ["bbbbb", "ddddd"]}]);
+  raw = deck(group("qqqqq", group("ggggg", box("aaaaa"), box("bbbbb")), box("eeeee")));
+  r = settle(raw, file('<group id="qqqqq">', '<group id="ggggg">', lines(raw, "aaaaa"), "</group>", lines(raw, "bbbbb"), lines(raw, "eeeee"), "</group>"));
+  assert.deepEqual(now(raw), [{qqqqq: ["aaaaa", "bbbbb", "eeeee"]}]);
+});
