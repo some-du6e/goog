@@ -87,7 +87,7 @@ export function writeText(file: string, text: string, crlf = false): string {
 }
 
 export const bodyOf = (text: string) => (text.includes("\n") ? text.slice(text.indexOf("\n") + 1) : "");
-const headOf = (text: string) => text.slice(0, text.indexOf("\n") + 1);
+const headOf = (text: string) => (text.includes("\n") ? text.slice(0, text.indexOf("\n") + 1) : text + "\n");
 
 // The body as goog would write it: blank lines, spacing and trailing newline
 // stop mattering. Throws FormatError.
@@ -288,6 +288,7 @@ export function imagesDir(file: string): string {
 export async function pull(id: string, file: string, opts: {force?: boolean; kind?: Kind} = {}): Promise<PullResult> {
   let crlf = false;
   let kind = opts.kind;
+  let noBase: string | undefined; // the file's text, when it has no base to check it against
   const exists = existsSync(file);
   if (exists) {
     const ft = readText(file);
@@ -304,12 +305,21 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
           dirty = canonBody(ft.text) !== bodyOf(base.text);
         } catch {}
         if (dirty) throw new SyncError(`${file} has changes that aren't in the doc yet; goog push sends them (merging with edits made in the doc), or pass --force to throw them away`);
-      }
+      } else noBase = ft.text;
     }
   }
   const be = backends[await kindOf(id, kind)];
   const remote = await be.fetch(id);
   const text = remote.text;
+  if (noBase !== undefined) {
+    // Never synced (or its record is gone): only a file that already says what
+    // the doc says can be replaced without --force.
+    let same = false;
+    try {
+      same = canonBody(noBase) === bodyOf(text);
+    } catch {}
+    if (!same) throw new SyncError(`${file} already exists, differs from the doc, and goog has no record of syncing it; goog diff ${file} shows the difference, goog push ${file} makes the doc match it, or pass --force to replace it with the doc`);
+  }
   const hash = writeText(file, text, crlf);
   writeBase(file, {id, text, rev: remote.rev});
   // Images are a convenience; a failed download doesn't fail the pull.
@@ -368,18 +378,23 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   const save = (text: string, rev?: string) => {
     if (!dryRun) writeBase(file, {id, text, rev});
   };
+  // The file was saved again while the doc was read: rewriting it would lose
+  // that save. Leave everything as it was; the next sync starts over from it.
+  const savedSince = () => (existsSync(file) ? readText(file).raw : null) !== ours.raw;
   if (act.action === "none") {
     save(theirs, remote.rev);
     return out;
   }
   if (act.action === "pull") {
     if (dryRun) return {...out, status: "pulled", patch: patch(file, headOf(ours.text) + canonBody(ours.text), act.text, "file", "doc")};
+    if (savedSince()) return out;
     out.hash = writeText(file, act.text, ours.crlf);
     save(theirs, remote.rev);
     return {...out, status: "pulled", rewrote: true};
   }
   if (act.action === "conflict") {
     if (dryRun) return {...out, status: "conflict", conflicts: act.conflicts};
+    if (savedSince()) return out;
     out.hash = writeText(file, act.text, ours.crlf);
     // The doc as it is now becomes the base: once the markers are resolved,
     // the resolved file is pushed over it, the way a merge commit works.
@@ -400,8 +415,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   out.warnings = res.warnings;
   out.status = res.requests ? "pushed" : "unchanged";
   const final = res.fetched.text;
-  const now = existsSync(file) ? readText(file) : null;
-  if (now?.raw === ours.raw) {
+  if (!savedSince()) {
     // Rewrite the file only if the doc came out different from it (a merge, or
     // something Docs normalized).
     if (bodyOf(final) !== canonBody(ours.text)) {
@@ -413,8 +427,9 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     // The file was saved again while we pushed. Its new content descends from
     // what we read, so that's the base the next sync merges against, and any
     // browser edits merged into `final` aren't mistaken for deletions.
+    // out.hash stays the pushed content's, so the newer save still counts as
+    // unpushed (goog wait keeps waiting, the watcher pushes it next).
     save(headOf(ours.text) + canonBody(ours.text), undefined);
-    out.hash = now?.hash ?? "";
   }
   return out;
 }

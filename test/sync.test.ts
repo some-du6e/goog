@@ -124,3 +124,86 @@ test("state records and listing", () => {
   S.setState(f, {status: "stopped", id: ID, pid: process.pid});
   assert.equal(S.watcherOf(f), null);
 });
+
+// ---------- push and pull against a fake backend ----------
+
+const {backends} = await import("../src/backend.ts");
+
+// Stands in for the Docs backend: the doc is `remote.text`, and `during`
+// runs while goog is reading it (say, the user saving the file again).
+function fakeDoc(text: string) {
+  const remote = {text, rev: "r1", during: (): void => {}, pushed: [] as string[]};
+  const be = backends.doc as any;
+  be.fetch = async () => {
+    remote.during();
+    remote.during = () => {};
+    return {text: remote.text, rev: remote.rev, remote: null};
+  };
+  be.push = async (_id: string, target: any) => {
+    remote.text = be.serialize(target);
+    remote.pushed.push(remote.text);
+    remote.during();
+    remote.during = () => {};
+    return {fetched: {text: remote.text, rev: "r2", remote: null}, requests: 1, warnings: []};
+  };
+  return remote;
+}
+
+const fileIn = (name: string) => join(tmp, name);
+
+test("pull won't replace a file it has no record of unless it matches the doc or --force", async () => {
+  const f = fileIn("nobase.goog");
+  fakeDoc(doc("from the doc"));
+  writeFileSync(f, doc("my own notes"));
+  await assert.rejects(S.pull(ID, f, {kind: "doc"}), /no record of syncing it/);
+  assert.equal(readFileSync(f, "utf8"), doc("my own notes"));
+  await S.pull(ID, f, {kind: "doc", force: true});
+  assert.equal(readFileSync(f, "utf8"), doc("from the doc"));
+  // Already the same: nothing to lose, so no --force needed.
+  S.forgetBase(f);
+  await S.pull(ID, f, {kind: "doc"});
+});
+
+test("a save made while push reads the doc isn't overwritten", async () => {
+  const f = fileIn("race-pull.goog");
+  const remote = fakeDoc(doc("one", "two", "three"));
+  await S.pull(ID, f, {kind: "doc"});
+  // Someone edits the doc; the file hasn't changed, so push would pull...
+  remote.text = doc("ONE", "two", "three");
+  // ...but the user saves while it's reading.
+  remote.during = () => writeFileSync(f, doc("one", "two", "3"));
+  const r = await S.push(f);
+  assert.equal(r.rewrote, false);
+  assert.equal(readFileSync(f, "utf8"), doc("one", "two", "3"));
+  // The next push merges both.
+  const r2 = await S.push(f);
+  assert.equal(r2.status, "pushed");
+  assert.equal(S.bodyOf(remote.text), S.bodyOf(doc("ONE", "two", "3")));
+});
+
+test("a save made during a push still counts as unpushed", async () => {
+  const f = fileIn("race-push.goog");
+  const remote = fakeDoc(doc("one"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("one", "two"));
+  const pushedHash = S.readText(f).hash;
+  remote.during = () => writeFileSync(f, doc("one", "two", "three"));
+  const r = await S.push(f);
+  assert.equal(r.status, "pushed");
+  // goog wait compares this with the file: it must not match the newer save.
+  assert.equal(r.hash, pushedHash);
+  assert.notEqual(r.hash, S.readText(f).hash);
+  assert.equal(readFileSync(f, "utf8"), doc("one", "two", "three"));
+  await S.push(f);
+  assert.equal(S.bodyOf(remote.text), S.bodyOf(doc("one", "two", "three")));
+});
+
+test("a file that's only the header line pushes an empty doc", async () => {
+  const f = fileIn("header-only.goog");
+  const remote = fakeDoc(doc("one"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, `<!-- goog doc ${ID} · "T" -->`);
+  const r = await S.push(f);
+  assert.equal(r.status, "pushed");
+  assert.equal(S.bodyOf(remote.text).trim(), "");
+});
