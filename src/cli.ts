@@ -66,10 +66,11 @@ Drive
   goog auth [status|import <token.json>|script [URL]|client <client_secret.json>]
   goog skill [install|remove]   the skill that teaches coding agents (Claude Code,
                                 Codex) to edit docs with goog; status if none given
+      --force                   install over a skill of the same name that isn't goog's
 
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
-ls, new, edit (one event per line), log, and errors ({"ok":false,"error":…}).
+ls, new, stop, skill, edit (one event per line), log, and errors ({"ok":false,"error":…}).
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
 
 Conflicts: when the doc and the file changed the same lines, the file gets
@@ -95,9 +96,12 @@ default style, so to match neighbouring text, write inside the same tags.
   <li>…</li>      bullet; level="2" nests
   lists           <li type="1|01|a|A|i|I"> numbered, type="check" checklist,
                   type="★" etc. other bullets; start="N" marks where a separate list begins
+                  (Docs can't set the number it starts counting from);
+                  <li style="h2"> is a list item with a heading style
   <table>         rows on their own lines: <tr><td>a</td><td>b</td></tr>
-                  multi-paragraph cells: <td><p>one</p><p>two</p></td>
-                  <td colspan="2" rowspan="2" bg="#ffe699">; cells hidden by a merge are left out
+                  multi-paragraph cells: <td><p>one</p><p>two</p></td>; <th> reads like <td>
+                  <td colspan="2" rowspan="2" bg="#ffe699">; cells hidden by a merge are left out,
+                  or written <td covered> when they hold something
   inline          <b> <i> <u> <s> <sup> <sub> <br> <a href="…">
                   <mark> (yellow) or <mark color="#00ff00"> highlight
                   <span color="#c00" font="Arial" size="14" weight="300" smallcaps> text style
@@ -119,23 +123,23 @@ default style, so to match neighbouring text, write inside the same tags.
   blocks          <object kind="section-break" type="next-page">, <object kind="toc">
   segments        <header id>…</header>, <footer id>…</footer>, <footnote-text id>…</footnote-text>
                   (the text of <footnote id>); each on its own lines, after the tab's body
-  tabs            <tab id="t.0" title="…" parent="…"> on its own line starts each tab
-                  (only when the doc has several); no closing tag
+  tabs            <tab id="t.0" title="…" parent="…" icon="…"> on its own line starts each
+                  tab (only when the doc has several); no closing tag. New tabs, headers
+                  and footers can't be added from the file
+  float="…"       on a paragraph: the ids of images positioned around it (keep as pulled)
   escaping        &lt; &gt; &amp; for literal < > &; &nbsp; &#x200b; etc. for invisible
                   characters; a line starting with ======= is written &#61;======
   blank lines     ignored; they're just spacing
 `;
 
-// Shown to whoever runs plain `goog` while an agent on this machine lacks the
-// skill. It's usually an agent, and installing changes the user's agent
-// setup, so the agent asks first.
 const SLIDES_HELP = `.goog format for Google Slides
 
 The file mirrors the deck: whatever you leave as pulled stays exactly as it is,
 so change only what you mean to. Pull also saves each slide as a picture
 (<file>.files/slide-N.png); look at it before moving things.
 
-  <slide id="…" layout="title-and-body">   one per slide, in order
+  <slide id="…" layout="title-and-body">   one per slide, in order; <slide … skip>
+                                           is skipped when presenting
   …objects, back to front…
   <notes>speaker notes, one paragraph per line</notes>
   </slide>
@@ -145,12 +149,14 @@ Objects (positions and sizes in points; the slide is usually 720 x 405):
   one paragraph per line, written as in a doc: <p align="center">, <b>, <li>,
   <span size="20">, <mark>, <a href>, <br>
   </shape>
-  <image id x y w h>                the picture is <file>.files/<id>.png
+  <image id x y w h alt="…">        the picture is <file>.files/<id>.png (or .jpg …);
+                                    alt is its alt text
   <line id x1 y1 x2 y2 arrow="end">  from (x1,y1) to (x2,y2)
   <table id x y>
   <tr><td bg="#ead1dc">text</td></tr>
   </table>
-  <video id x y w h youtube="…">    <group id>…</group>    <object id type=…>
+  <video id x y w h youtube="…">  (or drive="FILE_ID")
+  <group id>…</group>    <object id type=…>
 
   Shape types are Slides' shape names in lower case with dashes: text-box,
   rectangle, round-rectangle, ellipse, triangle, right-triangle, diamond,
@@ -166,10 +172,12 @@ Objects (positions and sizes in points; the slide is usually 720 x 405):
 
 Changing a deck
   edit text, move or resize (x y w h), recolor (fill, outline), move a line's ends, add
-  or delete table rows, write speaker notes. Delete a line to delete the object
-  or slide.
+  or delete table rows or columns, write speaker notes, skip or unskip a slide.
+  Delete a line to delete the object or slide; delete a <group> line and its
+  </group> to ungroup what's inside.
   Add: a tag without an id. <shape> and <table> need nothing else;
-  <image src="https://…"> needs a picture anyone can open; <video youtube="…">;
+  <image src="https://…"> needs a picture anyone can open; <video youtube="…">
+  or <video drive="FILE_ID">;
   <line x1 y1 x2 y2>. A new <slide layout="…"> takes a layout from the
   comment at the top; its <shape placeholder="title"> or "body" fills the
   layout's boxes.
@@ -178,6 +186,9 @@ Changing a deck
   Order: move <slide> blocks to reorder slides, object lines to restack them.
   Can't: change a slide's layout or a shape's type, make <object>s.`;
 
+// Shown to whoever runs plain `goog` while an agent on this machine lacks the
+// skill. It's usually an agent, and installing changes the user's agent
+// setup, so the agent asks first.
 const SKILL_HINT = `Agents: goog has a skill that makes editing docs faster for you. Ask the
 user whether to install it; if they say yes, run \`goog skill install\`.`;
 
@@ -217,7 +228,7 @@ async function cmdAuth(args: string[]) {
   if (!sub || sub === "status") {
     out(`goog auth: ${authStatus()}`);
     if (authStatus() === "not set up") {
-      out(`\nSet it up one of two ways:
+      out(`\nSet it up one of three ways:
   goog auth script     uses an Apps Script in your own Drive; works with school
                        accounts that don't allow Cloud projects (recommended)
   goog auth client F   uses a Google Cloud OAuth client (Desktop app) JSON

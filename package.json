@@ -1,7 +1,7 @@
 {
   "name": "goog",
   "version": "0.1.0",
-  "description": "Edit Google Docs as local .goog files",
+  "description": "Edit Google Docs and Slides as local .goog files",
   "type": "module",
   "bin": {
     "goog": "bin/goog.ts"

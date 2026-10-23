@@ -26,8 +26,8 @@ goog help                  # everything else
   watcher has pushed that exact content. A status about an earlier save never
   counts.
 - Exit codes: 0 ok, 1 error, 2 conflict, 3 timed out. `--json` works on
-  `status`, `wait`, `push`, `pull`, `diff`, `check`, `ls`, `new`, `stop`, `log`
-  and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
+  `status`, `wait`, `push`, `pull`, `diff`, `check`, `ls`, `new`, `stop`, `skill`,
+  `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
 - `goog log <file>` shows what the watcher did: pushes, pulls, conflicts,
   retries.
 
@@ -91,7 +91,8 @@ smart chips (`<chip type="person" email="…">`, `type="date" date="2026-12-25"`
 them without an id. Horizontal rules, equations, drawings, charts, and the
 table of contents can only be kept or deleted: the Docs API has no way to make
 them. Ticked checklist items read as `<li type="check" checked>`, but ticking
-one from the file isn't possible either.
+one from the file isn't possible either. Tabs, headers and footers can be
+edited, renamed or deleted, but new ones can't be added from the file.
 
 ## Slides
 
@@ -124,8 +125,9 @@ text itself stays readable. Pulling also saves each slide as a picture
 
 From the file you can edit text, move, resize and rotate objects, recolor
 fills and outlines (`#rrggbb` or theme colors like `accent1`), move a line's ends, add or
-remove table rows, write speaker notes, and delete, reorder or skip slides.
-New shapes, tables, lines, images (`src="https://…"`), YouTube videos, and
+remove table rows and columns, set alt text, write speaker notes, ungroup, and
+delete, reorder or skip (`<slide skip>`) slides.
+New shapes, tables, lines, images (`src="https://…"`), YouTube or Drive videos, and
 slides (`<slide layout="…">`, with `<shape placeholder="title">` filling the
 layout's boxes) are tags without an id. Pasting a slide block or an object's
 line a second time duplicates it. The API can't change a slide's layout or a
@@ -163,7 +165,7 @@ Config is in `~/.config/goog/`. Sync records, watcher state, and logs are in
 ## Development
 
 ```sh
-npm test            # format round trips + planner against a simulated Docs API
+npm test            # formats, planners (Docs against a simulated API), sync, CLI
 npm run typecheck
 ```
 

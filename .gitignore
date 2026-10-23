@@ -1,4 +1,3 @@
 node_modules/
 *.goog
-!test/fixtures/*.goog
 .agent-notes/

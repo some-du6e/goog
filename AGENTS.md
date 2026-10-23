@@ -82,6 +82,6 @@ Observed live; the code depends on each:
 
 - The scratch doc `18C0ykVGzbSM5BZMq9m9PrMwpxp7qMBn-H2Z6NyB7Tbg` belongs to
   the user: read it, or copy it and push to the copy.
-  test/fixtures/scratch.json is its raw API response.
+  test/fixtures/scratch.json is its API response, with the id replaced by "scratch-doc".
 - Auth is the imported token (`goog auth status`; `$GOOG_TOKEN` overrides
   it). Tokens stay out of tool output and the repo.
