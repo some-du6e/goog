@@ -1,12 +1,14 @@
 // Talks to the Slides API: reads a deck, pushes a .goog file to it pass by
 // pass, and saves its pictures for an agent to look at.
 
-import {spawn} from "node:child_process";
+import {execFile, spawn} from "node:child_process";
 import {createHash} from "node:crypto";
-import {closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
+import {closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
+import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
-import {ApiError, api} from "./google.ts";
+import {promisify} from "node:util";
+import {ApiError, DRIVE, api} from "./google.ts";
 import type {Deck} from "./slides-format.ts";
 import {plan, type SPlan} from "./slides-plan.ts";
 import {type RemoteDeck, fromApi} from "./slides-read.ts";
@@ -100,6 +102,31 @@ async function download(url: string): Promise<{type: string; data: Buffer}> {
   return api<{type: string; data: Buffer}>("GET", url, undefined, {bytes: true});
 }
 
+// The thumbnail API allows about 60 calls a minute per user, so drawing a big
+// deck slide by slide waits on the quota for a minute or more. Drive's PDF
+// export draws the whole deck in one call and mutool turns the pages into
+// pictures in a few seconds. A few changed slides stay on thumbnails, which
+// skip the export. False when this way can't draw them (no mutool, skipped
+// slides missing from the export, an export too big for Drive).
+const PDF_FROM = 10;
+const run = promisify(execFile);
+async function drawFromPdf(deckId: string, count: number, want: number[], slides: string[]): Promise<boolean> {
+  if (want.length < PDF_FROM) return false;
+  const tmp = mkdtempSync(join(tmpdir(), "goog-pdf-"));
+  try {
+    const pdf = join(tmp, "deck.pdf");
+    writeFileSync(pdf, (await api<{data: Buffer}>("GET", `${DRIVE}/files/${encodeURIComponent(deckId)}/export?mimeType=application/pdf`, undefined, {bytes: true})).data);
+    if (Number((await run("mutool", ["show", pdf, "trailer/Root/Pages/Count"])).stdout.trim()) !== count) return false;
+    await run("mutool", ["draw", "-q", "-w", "800", "-o", join(tmp, "p%d.png"), pdf, want.map((i) => i + 1).join(",")]);
+    for (const i of want) copyFileSync(join(tmp, `p${i + 1}.png`), slides[i]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(tmp, {recursive: true, force: true});
+  }
+}
+
 // Saves each picture on the deck as <dir>/<object id>.<ext> (skipping ones
 // already saved; an id always names the same picture) and a picture of every
 // slide as <dir>/slide-<n>.png, since where things sit is half of a slide. A
@@ -129,10 +156,14 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
   const hashes = remote.deck.slides.map((s) => createHash("sha1").update(JSON.stringify(s)).digest("hex"));
   const key = (i: number) => `slide-${i + 1}`;
   const stale = remote.slides.map((s, i) => [s.id, i] as const).filter(([, i]) => drawn[key(i)] !== hashes[i] || !existsSync(slides[i]));
-  const drawing = inBatches(stale, 12, async ([page, i]) => {
+  const drawThumbnails = () => inBatches(stale, 12, async ([page, i]) => {
     const t = await api<{contentUrl: string}>("GET", `${SLIDES}/${encodeURIComponent(remote.deck.id)}/pages/${encodeURIComponent(page)}/thumbnail?thumbnailProperties.mimeType=PNG&thumbnailProperties.thumbnailSize=MEDIUM`);
     writeFileSync(slides[i], (await download(t.contentUrl)).data);
     drawn[key(i)] = hashes[i];
+  });
+  const drawing = drawFromPdf(remote.deck.id, remote.slides.length, stale.map(([, i]) => i), slides).then((done) => {
+    if (done) for (const [, i] of stale) drawn[key(i)] = hashes[i];
+    else return drawThumbnails();
   });
   try {
     await Promise.all([saving, drawing]);

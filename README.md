@@ -126,7 +126,10 @@ font, size and color most of an object's text shares go on its tag, so the
 text itself stays readable. Pulling and pushing also draw each slide as a
 picture (`<id>.files/slide-N.png`) next to the deck's images. That happens in
 the background, since it's most of a pull's time, and only for slides that
-changed; `goog pics <file>` waits for it.
+changed; `goog pics <file>` waits for it. With `mutool` installed (apt's
+`mupdf-tools`), many slides are drawn from one PDF export instead of slide by
+slide, which Google limits to about 60 a minute: an 88-slide deck takes about
+25s instead of a minute and a half.
 
 From the file you can edit text, move, resize and rotate objects, recolor
 fills and outlines (`#rrggbb` or theme colors like `accent1`), move a line's ends, add or
