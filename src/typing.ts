@@ -100,11 +100,23 @@ export function flubs(chs: Chunk[], t: Pick<Typing, "random">): Step[] {
   const random = t.random ?? Math.random;
   const between = (lo: number, hi: number) => lo + (hi - lo) * random();
   const out: Step[] = [];
+  const total = chs.reduce((n, c) => n + c.text.length, 0);
   // Deletions to spread across this paragraph: aim for ~10% of typed chars.
-  let budget = Math.round(chs.reduce((n, c) => n + c.text.length, 0) * between(0.09, 0.13));
+  // Short paragraphs get a little more (20%): at exactly 10% even a 30-char
+  // one couldn't delete a 4-letter word, and zero deletions across the doc is
+  // what revision-history checkers flag. 20% can't overshoot the ratio
+  // ceiling below by itself (it allows del ≤ 0.2·total, and the ceiling trips
+  // at del/(text + del) > 0.25, i.e. del > 0.25·text/0.75 ≈ 0.33·text), so it
+  // never buys a flub the check has to skip — only ever one small one.
+  let budget = Math.max(3, Math.round(total * 0.2));
+  let deleted = 0;
+  let inserted = 0;
   let skip = 0; // chunks to leave alone after a mistake, so they don't bunch up
   for (const c of chs) {
-    const plain = () => out.push({insert: c.text, wait: c.wait});
+    const plain = () => {
+      out.push({insert: c.text, wait: c.wait});
+      inserted += c.text.length;
+    };
     if (budget <= 0 || skip > 0 || c.text.length < 6) {
       plain();
       skip--;
@@ -120,17 +132,22 @@ export function flubs(chs: Chunk[], t: Pick<Typing, "random">): Step[] {
     }
     const [, head, gap, word, tail] = m;
     const wrong = typo(word, random);
-    if (wrong === word) {
+    // Skip the flub rather than bust the budget or the ratio ceiling: the
+    // check above only gates the NEXT mistake, so without these a 10-char
+    // paragraph (budget 1) would still delete 7 chars for a 41% ratio.
+    const del = wrong.length + tail.length;
+    if (wrong === word || del > budget || (deleted + del) / (inserted + c.text.length + del) > 0.25) {
       plain();
       continue;
     }
     out.push({insert: head + gap + wrong + tail, wait: c.wait});
     // The reader notices after a beat and deletes back to the start of the
     // word (typo + any trailing punctuation), then types it right.
-    const del = wrong.length + tail.length;
     out.push({del, wait: Math.max(MIN_GAP_MS, Math.round(between(600, 1400)))});
     out.push({insert: word + tail, wait: Math.max(MIN_GAP_MS, Math.round(between(700, 1600)))});
     budget -= del;
+    deleted += del;
+    inserted += c.text.length + del;
     skip = 2 + Math.floor(random() * 3);
   }
   return out;

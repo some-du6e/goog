@@ -149,6 +149,41 @@ test("flubs: net text equals the original, with a plausible deletion ratio", () 
   }
 });
 
+test("flubs: short paragraphs (down to TYPE_MIN) keep a sane deletion ratio", () => {
+  // mulberry32 so the sweep is deterministic; the old budget check let
+  // "Short one." delete 41% of its keystrokes at seed 27.
+  const rng = (seed: number) => () => {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  // [text, expect a flub at some seed?]. The cap may price flubs out of a
+  // tiny paragraph (better none than a 28% spike), but not out of longer
+  // ones: a doc with no deletions at all is what the checkers flag.
+  const cases: [string, boolean][] = [
+    ["Short one.", true],
+    ["A ten-char answer.", false],
+    ["Mitochondria is the powerhouse of the cell, at thirty-five characters or so.", true],
+  ];
+  for (const [text, expectFlub] of cases) {
+    let sawFlub = false;
+    for (let seed = 1; seed <= 500; seed++) {
+      const steps = flubs(chunks(text, {wpm: 300, random: rng(seed)}), {random: rng(seed)});
+      let inserted = 0;
+      let deleted = 0;
+      for (const s of steps) {
+        if ("insert" in s) inserted += s.insert.length;
+        else deleted += s.del;
+      }
+      sawFlub ||= deleted > 0;
+      assert.ok(deleted / inserted <= 0.25, `seed ${seed} on ${JSON.stringify(text)}: del ratio ${deleted}/${inserted} = ${deleted / inserted}`);
+    }
+    assert.equal(sawFlub, expectFlub, `flub presence for ${JSON.stringify(text)}`);
+  }
+});
+
 test("a stale-guard 400 retries without the guard only when the doc's rev is unchanged", async () => {
   // Docs forgot the rev: io.batch rejects once with "required revision" even
   // though the sim's rev never moved. The retry (unguarded) must land.
