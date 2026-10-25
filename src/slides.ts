@@ -289,15 +289,14 @@ export function drawInBackground(id: string, dir: string): boolean {
 // long as syncs keep asking.
 export async function drawNow(id: string, dir: string) {
   for (;;) {
-    try {
-      do {
-        rmSync(redrawPath(dir), {force: true});
-        await saveDeckImages(await fetchDeck(id), dir);
-      } while (existsSync(redrawPath(dir)));
-    } finally {
-      // Only clear the mark if it's still ours.
-      if (drawingPid(dir) === process.pid || !drawingPid(dir)) rmSync(drawingPath(dir), {force: true});
-    }
+    do {
+      rmSync(redrawPath(dir), {force: true});
+      await saveDeckImages(await fetchDeck(id), dir);
+    } while (existsSync(redrawPath(dir)));
+    // Only once it worked, and only if the mark is still ours: a draw that
+    // failed leaves it, so goog pics says so even when the error couldn't be
+    // written (a full disk).
+    if (drawingPid(dir) === process.pid || !drawingPid(dir)) rmSync(drawingPath(dir), {force: true});
     // A sync that asked for a redraw just as this draw finished.
     if (!existsSync(redrawPath(dir)) || !claim(dir, process.pid)) return;
   }
@@ -309,12 +308,12 @@ export type DrawWait = {status: "done"} | {status: "failed" | "drawing"; message
 export async function waitForDrawing(dir: string, timeoutMs: number): Promise<DrawWait> {
   const deadline = Date.now() + timeoutMs;
   while (drawingPid(dir)) {
-    if (Date.now() > deadline) return {status: "drawing", message: `the slides are still being drawn after ${Math.round(timeoutMs / 1000)}s`};
+    if (Date.now() > deadline) return {status: "drawing", message: `the slides are still being drawn after ${Math.round(timeoutMs / 1000)}s (a big deck without mutool takes about a second a slide); the draw carries on, so run goog pics again, or with a longer --timeout`};
     await new Promise((r) => setTimeout(r, 200));
   }
   const e = existsSync(drawErrorPath(dir)) ? readFileSync(drawErrorPath(dir), "utf8").trim().replace(/^goog: /, "") : "";
   if (e) return {status: "failed", message: `drawing the slides failed: ${e}`};
-  // A finished draw removes its mark; one left behind was killed partway.
-  if (existsSync(drawingPath(dir))) return {status: "failed", message: "the draw was stopped before it finished, so some pictures may be out of date"};
+  // A finished draw removes its mark; one left behind failed or was killed.
+  if (existsSync(drawingPath(dir))) return {status: "failed", message: "the draw stopped before it finished (killed, or out of disk space?), so some pictures may be out of date; the next pull or push draws them again"};
   return {status: "done"};
 }

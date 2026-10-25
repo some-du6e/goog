@@ -46,7 +46,7 @@ function deckOf(n: number): any {
 
 const calls = {thumbs: 0, exports: 0};
 // What a fetch of the deck returns, and what runs just after it's read.
-const served = {deck: deckOf(9) as any, fetches: 0, during: (): void => {}};
+const served = {deck: deckOf(9) as any, fetches: 0, during: (): void => {}, gone: false};
 function serve() {
   const real = globalThis.fetch;
   calls.thumbs = calls.exports = 0;
@@ -54,6 +54,7 @@ function serve() {
     const u = String(url);
     if (/\/presentations\/[^/?]+$/.test(u)) {
       served.fetches++;
+      if (served.gone) return new Response(JSON.stringify({error: {code: 404, message: "not found"}}), {status: 404, headers: {"content-type": "application/json"}});
       const body = JSON.stringify(served.deck);
       served.during();
       return new Response(body, {headers: {"content-type": "application/json"}});
@@ -219,4 +220,14 @@ test("pictures: a mark left by a killed draw is taken over, a live one isn't", (
   assert.ok(!claim(dir, process.pid));
   assert.equal(readFileSync(join(dir, ".drawing"), "utf8"), live);
   assert.deepEqual(readdirSync(dir), [".drawing"]);
+});
+
+test("pictures: a draw that fails keeps its mark, so goog pics can't take it for done", async (t) => {
+  t.after(serve());
+  t.after(() => (served.gone = false));
+  const dir = fresh();
+  writeFileSync(join(dir, ".drawing"), `${process.pid} ${startedAt(process.pid) ?? ""}`);
+  served.gone = true;
+  await assert.rejects(drawNow("deck", dir));
+  assert.ok(existsSync(join(dir, ".drawing")));
 });

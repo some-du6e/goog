@@ -105,9 +105,9 @@ Classroom
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
 pics, ls, new, stop, skill, classroom, transcript, edit (one event per line), log,
-and errors ({"ok":false,"error":…}). A deck's pull, push and edit say "drawing":true
-while the slide pictures are drawn (false if the draw couldn't start); goog
-pics --json lists them once they're done.
+and errors ({"ok":false,"error":…}). A deck's pull and push say "drawing":true
+while the slide pictures are drawn (false if the draw couldn't start), as does
+edit --bg while a draw runs; goog pics --json lists them once they're done.
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
 
 Conflicts: when the doc and the file changed the same lines, the file gets
