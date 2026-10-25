@@ -34,9 +34,11 @@ goog help                  # everything else
 - `goog push <file> --type` types new text in through the API, a few
   words a write at about 45 words a minute (`--wpm N`), one paragraph at a
   time from the top. The doc's version history then shows it being written,
-  not pasted. Formatting is applied after a paragraph's words. Fixes under 10
-  characters go in at once. A push that's stopped partway carries on when it's
-  run again. Docs allows about 60 writes a minute, which sets the pace.
+  not pasted. Occasional words are mistyped and backspaced out — that's the
+  point; revision-history checkers flag a doc with no deletions as inhuman.
+  Formatting is applied after a paragraph's words. Fixes under 10 characters
+  go in at once. A push that's stopped partway carries on when it's run
+  again. Docs allows about 60 writes a minute, which sets the pace.
 
 - `goog skill install` gives Claude Code and Codex a skill with the
   pull/edit/push steps and the format, so they skip reading `goog help`

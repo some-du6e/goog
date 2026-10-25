@@ -3,7 +3,7 @@ import {join} from "node:path";
 import {ApiError, DOCS, DRIVE, api} from "./google.ts";
 import {fromApi} from "./gdocs-read.ts";
 import {CHECKS_WARNING, adoptNew, plan, typeable, type Plan, type PlanRemote} from "./gdocs-plan.ts";
-import {chunks, type Typing} from "./typing.ts";
+import {chunks, flubs, type Typing} from "./typing.ts";
 import type {Block, Doc, Para} from "./model.ts";
 
 export function toRemote(raw: any): PlanRemote {
@@ -199,11 +199,16 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
     pending = [];
     const {location, text} = r.insertText;
     let index = location.index;
-    for (const c of chunks(text, t)) {
-      await sleep(c.wait);
-      await send([{insertText: {location: {...location, index}, text: c.text}}]);
-      index += c.text.length;
-      done += c.text.length;
+    for (const s of flubs(chunks(text, t), t)) {
+      await sleep(s.wait);
+      if ("insert" in s) {
+        await send([{insertText: {location: {...location, index}, text: s.insert}}]);
+        index += s.insert.length;
+        done += s.insert.length;
+      } else {
+        await send([{deleteContentRange: {range: {startIndex: index - s.del, endIndex: index}}}]);
+        index -= s.del;
+      }
       t.onChunk?.(done, total);
     }
     replies.push({});

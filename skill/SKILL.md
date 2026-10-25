@@ -27,7 +27,9 @@ and wait for `pushed`. Leave a blank line between paragraphs — one per line
 without them looks like a wall of text in the doc. If it's stopped partway,
 the same command picks up where it left off. Small fixes (under 10
 characters) still go in at once. `--wpm N` changes the speed. It won't run
-while `goog edit` watches the file.
+while `goog edit` watches the file. Typos are typed in then backspaced out
+every few sentences — that's on purpose, so revision-history detectors see a
+human editing pattern instead of a clean paste.
 
 ## Format
 

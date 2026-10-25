@@ -9,7 +9,7 @@ import {ApiError} from "../src/google.ts";
 import type {Block} from "../src/model.ts";
 import {SCENARIOS} from "./plan-scenarios.ts";
 import {SimDoc} from "./sim.ts";
-import {MIN_GAP_MS, chunks} from "../src/typing.ts";
+import {MIN_GAP_MS, chunks, flubs} from "../src/typing.ts";
 
 const HEAD = "<!-- goog doc sim -->\n";
 const body = (s: string) => s.slice(s.indexOf("\n") + 1).trim();
@@ -92,9 +92,13 @@ test("a typed push types answers top to bottom, a few words a write, then styles
   const a2 = "The mitochondrion, which makes energy for the cell.";
   const r = await push(sim, `Q1: What is a cell?\n${a1.replace("basic unit", "<b>basic unit</b>")}\nQ2: Name an organelle.\n${a2}`, {typing: true});
   assert.equal(r.out, `Q1: What is a cell?\n${a1.replace("basic unit", "<b>basic unit</b>")}\nQ2: Name an organelle.\n${a2}`);
+  // Net text (inserts minus deletes) equals the original; some inserts are
+  // typos that get backspaced out, so don't expect a literal join.
   const inserts = r.batches.flat().filter((q) => q.insertText).map((q) => q.insertText.text);
-  // Enter, then the answer, for Q1 and then for Q2.
-  assert.equal(inserts.join(""), `\n${a1}\n${a2}`);
+  const deletes = r.batches.flat().filter((q) => q.deleteContentRange).map((q) => q.deleteContentRange.range.endIndex - q.deleteContentRange.range.startIndex);
+  const insertedChars = inserts.reduce((n, s) => n + s.length, 0);
+  const deletedChars = deletes.reduce((n, d) => n + d, 0);
+  assert.equal(insertedChars - deletedChars, `\n${a1}\n${a2}`.length);
   assert.ok(inserts.every((t) => t.split(" ").filter(Boolean).length <= 3), inserts.join("|"));
   // Each piece of typing is a write of its own; the bold comes after the words.
   const typed = r.batches.filter((b) => b.some((q) => q.insertText && q.insertText.text !== "\n"));
@@ -116,6 +120,33 @@ test("typing chunks cover the text, end at sentences, and keep to the write quot
   }
 });
 
+
+test("flubs: net text equals the original, with a plausible deletion ratio", () => {
+  const text = "The quick brown fox jumps over the lazy dog. It was a bright cold day in April, and the clocks were striking thirteen. ";
+  for (const seed of [0.05, 0.3, 0.6, 0.95]) {
+    let i = 0;
+    const rand = () => [0.05, 0.3, 0.6, 0.95][i++ % 4];
+    const steps = flubs(chunks(text, {wpm: 300, random: rand}), {random: rand});
+    let net = "";
+    let inserted = 0;
+    let deleted = 0;
+    for (const s of steps) {
+      assert.ok(s.wait >= MIN_GAP_MS, JSON.stringify(s));
+      if ("insert" in s) {
+        net += s.insert;
+        inserted += s.insert.length;
+      } else {
+        net = net.slice(0, net.length - s.del);
+        deleted += s.del;
+      }
+    }
+    assert.equal(net, text);
+    // The extension flags under 5%; land comfortably above, without looking
+    // like a maniac either.
+    assert.ok(deleted / inserted >= 0.06, `del ratio ${deleted}/${inserted} = ${deleted / inserted}`);
+    assert.ok(deleted / inserted <= 0.25, `del ratio ${deleted}/${inserted} = ${deleted / inserted}`);
+  }
+});
 
 test("small edits send few requests, in one pass", async () => {
   const sim = SimDoc.from("<h1>Title</h1>\nSome <b>bold</b> words here.\nlast");
