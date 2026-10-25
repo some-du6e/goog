@@ -205,8 +205,12 @@ async function pushDocPasses(
           : await io.batch(id, {requests: p.requests, writeControl: rev ? {requiredRevisionId: rev} : undefined});
       } catch (e) {
         // The signal handler stopped the typing and is snapshotting the doc
-        // itself (it kills the process after); don't race it with another
-        // fetch, and don't surface the internal abort as the push's error.
+        // itself (it kills the process after); don't surface the internal
+        // abort as the push's error. Refetch anyway: should the process
+        // survive (an embedded caller, a failed kill), the result's remote
+        // must be the doc as it actually is, not the pre-pass state — a
+        // caller that rewrote the file from the pre-pass text would lose the
+        // typed text.
         if (e instanceof TypingAborted) return null;
         // A mid-typing failure leaves the doc between the base and the file;
         // save where it got to so the next push resumes instead of conflicting.
@@ -226,7 +230,14 @@ async function pushDocPasses(
         throw e;
       }
     })();
-    if (!res) return {remote, requests, passes: pass, warnings};
+    if (!res) {
+      try {
+        remote = toRemote(await io.get(id));
+      } catch {
+        // keep the pre-pass remote; the handler's base save is the one that matters
+      }
+      return {remote, requests, passes: pass, warnings};
+    }
     requests += p.requests.length;
     for (const c of p.created) c.apply(res.replies?.[p.requests.indexOf(c.req)]);
     remote = toRemote(await io.get(id));
@@ -307,14 +318,15 @@ async function typeBatch(
       pending.push(r);
       continue;
     }
+    // A signal stops the typing wherever it's got to; the handler is
+    // snapshotting the doc and can't race another write landing after it.
+    if (ctl.aborted) throw new TypingAborted();
     if (pending.length) replies.push(...(await send(pending)));
     pending = [];
     const {location} = r.insertText;
     const {index: _i, ...ctx} = location; // segmentId/tabId, for the backspaces
     let index = location.index;
     for (const s of steps[at++]) {
-      // A signal during the sleep or the write stops the typing here; the
-      // handler is snapshotting the doc and can't race another chunk landing.
       if (ctl.aborted) throw new TypingAborted();
       await sleep(s.wait);
       if (ctl.aborted) throw new TypingAborted();
@@ -330,6 +342,7 @@ async function typeBatch(
     }
     replies.push({});
   }
+  if (ctl.aborted) throw new TypingAborted();
   if (pending.length) replies.push(...(await send(pending)));
   return {replies, writeControl: {requiredRevisionId: guard}};
 }

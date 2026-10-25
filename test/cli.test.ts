@@ -78,12 +78,14 @@ test("push --type refuses decks, a watching goog edit, and a bad --wpm", () => {
   // (its pid is this shell, so it reads as alive) via sync.ts's own setter.
   const watched = join(tmp, "watched.goog");
   writeFileSync(watched, `<!-- goog doc ${ID} -->\n`);
-  const sync = join(tmp, "mksw.js");
-  writeFileSync(sync, `const s = await import(${JSON.stringify(new URL("../src/sync.ts", import.meta.url).href)});\ns.setState(process.argv[2], {status: "synced", id: process.argv[3], pid: Number(process.argv[4])});\n`);
+  const sync = join(tmp, "mkstate.js");
+  writeFileSync(sync, `const s = await import(${JSON.stringify(new URL("../src/sync.ts", import.meta.url).href)});\nif (process.argv[5] === "rm") s.forgetState(process.argv[2]);\nelse s.setState(process.argv[2], {status: "synced", id: process.argv[3], pid: Number(process.argv[4])});\n`);
   execFileSync(process.execPath, ["--experimental-strip-types", sync, watched, ID, String(process.ppid)], {env});
   const w = goog("push", watched, "--type");
   assert.equal(w.status, 1);
   assert.match(w.stderr, /would push it without typing/);
+  // Don't leak the fake watcher into later tests' bare status/stop/log calls.
+  execFileSync(process.execPath, ["--experimental-strip-types", sync, watched, ID, "0", "rm"], {env});
   // --wpm that isn't a number is rejected before any push.
   const bad = goog("push", "ok.goog", "--type", "--wpm", "abc");
   assert.equal(bad.status, 1);

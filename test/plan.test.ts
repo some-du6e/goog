@@ -270,6 +270,7 @@ function fakeSignal() {
   const killed: string[] = [];
   return {
     killed,
+    fired: false,
     count: (sig: string) => handlers.get(sig)?.length ?? 0,
     fire: (sig: string) => handlers.get(sig)?.forEach((h) => h(sig)),
     on: (sig: string, fn: Function) => handlers.set(sig, [...(handlers.get(sig) ?? []), fn]),
@@ -352,6 +353,50 @@ test("a signal mid-typing freezes the typing before the base is snapshot", async
   const len = Number(order[1].split(":")[1]);
   assert.ok(len > "Q: life?".length, `snapshot too early: ${order.join(", ")}`);
   assert.deepEqual(sig.killed, ["SIGINT"], "the handler must re-signal after saving");
+});
+
+test("a signal after the last chunk blocks the trailing structural flush", async () => {
+  // A bolded answer plans [insertText(typeable), updateTextStyle]: the style
+  // request lands in the flush AFTER the steps loop. A signal arriving once
+  // the last chunk is in must stop that flush too, or it races the handler's
+  // snapshot (a delete in that position would leave the base a request short).
+  const sim = SimDoc.from("Q: life?\n");
+  const x = io(sim);
+  const writes: string[] = [];
+  let lastChunkAt = -1;
+  const sig = fakeSignal();
+  const tracking: DocsIO = {
+    get: x.get,
+    batch: async (id, b) => {
+      writes.push(JSON.stringify(b.requests));
+      if (b.requests.some((r: any) => r.insertText && r.insertText.text.length > 3)) lastChunkAt = writes.length - 1;
+      return x.batch(id, b);
+    },
+  };
+  const file = "Q: life?\nThe <b>answer</b> to life, the universe and everything is forty-two.\n";
+  const p = pushDoc("sim", parse(HEAD + file), {
+    io: tracking,
+    typing: {
+      ...TYPING,
+      onChunk: (done: number, total: number) => {
+        // The last chunk just landed; the style flush is what would go next.
+        if (done === total && !sig.fired) {
+          sig.fired = true;
+          sig.fire("SIGINT");
+        }
+      },
+    },
+    onSignal: async () => {},
+    signal: sig,
+  });
+  await p;
+  assert.ok(sig.fired, "the signal never fired");
+  assert.ok(lastChunkAt > 0, "no typed chunks seen");
+  assert.equal(writes.length - 1, lastChunkAt, `writes after the last chunk: ${writes.slice(lastChunkAt + 1).join(" | ")}`);
+  assert.equal(sig.killed.length, 1);
+  // The next push resumes from the aborted state and converges.
+  await pushDoc("sim", parse(HEAD + file), {io: x, typing: TYPING});
+  assert.equal(body(serialize(fromApi(sim.toApi()).doc)), file.trimEnd());
 });
 
 test("a mid-typing failure saves the partial doc via onWrote so the next push resumes", async () => {
