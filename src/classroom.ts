@@ -64,19 +64,31 @@ export function isTodo(w: Work, now = Date.now()): boolean {
 
 const lower = (s: string) => s.toLowerCase().replace(/_/g, "-");
 
+const classroomPath = (arg: string) => /^(https?:\/\/)?classroom\.google\.com\//.test(arg.trim())
+  ? new URL(/^https?:/.test(arg) ? arg : `https://${arg}`).pathname.replace(/\/u\/\d+(?=\/)/, "")
+  : null;
+const unBase64 = (s: string) => (/^\d+$/.test(s) ? s : Buffer.from(s, "base64url").toString("utf8"));
+
 // classroom.google.com/c/<base64 course id>/a/<base64 work id>/details, or
-// courseId/workId.
+// courseId/workId. Questions are /sa/ and /mc/.
 export function parseWorkRef(arg: string): {courseId: string; id: string} | null {
   const plain = /^(\d+)\/(\d+)$/.exec(arg.trim());
   if (plain) return {courseId: plain[1], id: plain[2]};
-  if (!/^(https?:\/\/)?classroom\.google\.com\//.test(arg.trim())) return null;
-  const path = new URL(/^https?:/.test(arg) ? arg : `https://${arg}`).pathname.replace(/\/u\/\d+(?=\/)/, "");
-  const m = /^\/c\/([\w-]+)\/(?:a|m|sa|mc)\/([\w-]+)/.exec(path);
+  const path = classroomPath(arg);
+  if (path === null) return null;
+  if (/^\/c\/[\w-]+\/m\//.test(path)) throw new Error(`"${arg}" is a class material, not an assignment; goog reads assignments, so open its files' own links`);
+  const m = /^\/c\/([\w-]+)\/(?:a|sa|mc)\/([\w-]+)/.exec(path);
   if (!m) throw new Error(`"${arg}" isn't a Classroom assignment link; open the assignment and copy its URL`);
-  const un = (s: string) => (/^\d+$/.test(s) ? s : Buffer.from(s, "base64url").toString("utf8"));
-  const [courseId, id] = [un(m[1]), un(m[2])];
+  const [courseId, id] = [unBase64(m[1]), unBase64(m[2])];
   if (!/^\d+$/.test(courseId) || !/^\d+$/.test(id)) throw new Error(`can't find the course and assignment ids in "${arg}"`);
   return {courseId, id};
+}
+
+// A class's link, classroom.google.com/c/<base64 course id>: its id.
+export function parseCourseRef(arg: string): string | null {
+  const m = /^\/c\/([\w-]+)\/?$/.exec(classroomPath(arg) ?? "");
+  const id = m ? unBase64(m[1]) : "";
+  return /^\d+$/.test(id) ? id : null;
 }
 
 const KIND: Record<string, string> = {document: "doc", presentation: "slides", spreadsheets: "sheet", forms: "form", drawings: "drawing"};
@@ -98,12 +110,13 @@ function attachment(m: any): Attachment | null {
   return null;
 }
 
-// Classroom gives due dates in UTC.
-function dueOf(cw: any): string | undefined {
+// Classroom gives due dates in UTC. Its JSON leaves out fields that are 0, so
+// a due time of {} is midnight; only a missing one means the end of the day.
+export function dueOf(cw: any): string | undefined {
   const d = cw.dueDate;
   if (!d) return undefined;
-  const t = cw.dueTime ?? {};
-  return new Date(Date.UTC(d.year, d.month - 1, d.day, t.hours ?? 23, t.minutes ?? 59)).toISOString();
+  const t = cw.dueTime ?? {hours: 23, minutes: 59};
+  return new Date(Date.UTC(d.year, d.month - 1, d.day, t.hours ?? 0, t.minutes ?? 0)).toISOString();
 }
 
 export function localTime(iso: string): string {
@@ -111,6 +124,8 @@ export function localTime(iso: string): string {
   const zone = d.toLocaleTimeString("en-US", {timeZoneName: "short"}).split(" ").pop();
   return `${d.toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric"})} ${d.toTimeString().slice(0, 5)} ${zone}`;
 }
+
+const courseName = (c: any) => (c.section ? `${c.name} (${c.section})` : c.name);
 
 function toWork(course: {id: string; name: string}, cw: any, sub: any, now = Date.now()): Work {
   const due = dueOf(cw);
@@ -160,7 +175,7 @@ async function stripName(ws: Work[]): Promise<Work[]> {
 
 export async function courses(): Promise<{id: string; name: string}[]> {
   const cs = await all(`${CLASSROOM}/courses?courseStates=ACTIVE&studentId=me`, "courses");
-  return cs.map((c) => ({id: c.id, name: c.section ? `${c.name} (${c.section})` : c.name}));
+  return cs.map((c) => ({id: c.id, name: courseName(c)}));
 }
 
 // Everything assigned in the matching active courses, soonest due first.
@@ -189,7 +204,7 @@ export async function getWork(ref: {courseId: string; id: string}): Promise<Work
     api("GET", `${CLASSROOM}/courses/${ref.courseId}/courseWork/${ref.id}`),
     all(`${CLASSROOM}/courses/${ref.courseId}/courseWork/${ref.id}/studentSubmissions?userId=me`, "studentSubmissions"),
   ]);
-  const w = toWork({id: course.id, name: course.section ? `${course.name} (${course.section})` : course.name}, cw, subs[0]);
+  const w = toWork({id: course.id, name: courseName(course)}, cw, subs[0]);
   return (await stripName([w]))[0];
 }
 
@@ -201,7 +216,7 @@ export function editable(w: Work): Attachment {
   const list = (as: Attachment[]) => as.map((a) => `\n  ${a.kind}  ${a.url}  ${a.title}`).join("");
   if (mine.length > 1) throw new Error(`"${w.title}" has ${mine.length} files of yours; pick one:${list(mine)}`);
   const theirs = w.materials.filter((a) => a.readable && a.share === "edit");
-  if (theirs.length === 1 && !w.yours.length) return theirs[0];
+  if (theirs.length === 1) return theirs[0];
   throw new Error(`"${w.title}" has no Doc or Slides of yours to edit${w.yours.length || w.materials.length ? `. Its files:${list([...w.yours, ...w.materials])}` : ""}`);
 }
 
@@ -249,13 +264,15 @@ function templateOf(w: Work, a: Attachment): Attachment | undefined {
 // YouTube videos a .goog text links to or embeds.
 export function videosIn(text: string): string[] {
   const ids = new Set<string>();
-  for (const m of text.matchAll(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube=")([\w-]{11})/g)) ids.add(m[1]);
+  const re = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^"\s<>]*?(?:&amp;|&))?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/|youtube=")([\w-]{11})/g;
+  for (const m of text.matchAll(re)) ids.add(m[1]);
   return [...ids].map((id) => `https://youtu.be/${id}`);
 }
 
 // Fills in the progress fields on each Doc or Slides of yours in `ws`, and
-// with `materials`, the videos linked from the teacher's files.
-export async function measure(ws: Work[], opts: {materials?: boolean} = {}): Promise<void> {
+// with `materials`, the videos linked from the teacher's files. `yours:
+// false` skips the progress.
+export async function measure(ws: Work[], opts: {materials?: boolean; yours?: boolean} = {}): Promise<void> {
   const texts = new Map<string, Promise<{words: string[]; objects: number; ticks: number; videos: string[]} | null>>();
   const read = (a: Attachment) => {
     if (!texts.has(a.id!)) {
@@ -266,14 +283,16 @@ export async function measure(ws: Work[], opts: {materials?: boolean} = {}): Pro
   if (opts.materials) {
     await Promise.all(ws.map(async (w) => {
       const found: {url: string; in: string}[] = [];
-      for (const a of w.materials) {
-        if (a.kind === "youtube") continue; // already listed as the teacher's
-        const t = a.readable ? await read(a) : null;
-        for (const url of t?.videos ?? []) if (!found.some((v) => v.url === url)) found.push({url, in: a.title});
-      }
+      // Videos attached to the assignment are already listed as the teacher's.
+      const files = w.materials.filter((a) => a.readable);
+      const texts = await Promise.all(files.map(read));
+      files.forEach((a, i) => {
+        for (const url of texts[i]?.videos ?? []) if (!found.some((v) => v.url === url)) found.push({url, in: a.title});
+      });
       w.videos = found;
     }));
   }
+  if (opts.yours === false) return;
   await Promise.all(ws.flatMap((w) => w.yours.filter((a) => a.readable).map(async (a) => {
     const t = templateOf(w, a);
     const [mine, theirs] = await Promise.all([read(a), t ? read(t) : null]);

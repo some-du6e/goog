@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import {addedWords, editable, isBlank, isTodo, marks, parseWorkRef, videosIn, words, type Attachment, type Work} from "../src/classroom.ts";
+import {addedWords, dueOf, editable, isBlank, isTodo, marks, parseCourseRef, parseWorkRef, videosIn, words, type Attachment, type Work} from "../src/classroom.ts";
 
 test("parseWorkRef: Classroom links and courseId/workId", () => {
   const want = {courseId: "793347668502", id: "883088850317"};
@@ -10,6 +10,21 @@ test("parseWorkRef: Classroom links and courseId/workId", () => {
   assert.equal(parseWorkRef("https://docs.google.com/document/d/abc/edit"), null);
   assert.equal(parseWorkRef("notes.goog"), null);
   assert.throws(() => parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy"), /isn't a Classroom assignment link/);
+  assert.throws(() => parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/m/ODgzMDg4ODUwMzE3/details"), /class material, not an assignment/);
+});
+
+test("parseCourseRef: a class's link", () => {
+  assert.equal(parseCourseRef("https://classroom.google.com/u/0/c/NzkzMzQ3NjY4NTAy"), "793347668502");
+  assert.equal(parseCourseRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/a/ODgzMDg4ODUwMzE3/details"), null);
+  assert.equal(parseCourseRef("Science"), null);
+});
+
+test("dueOf: Classroom's JSON leaves out zero hours and minutes", () => {
+  const dueDate = {year: 2026, month: 10, day: 27};
+  assert.equal(dueOf({dueDate, dueTime: {hours: 12}}), "2026-10-27T12:00:00.000Z");
+  assert.equal(dueOf({dueDate, dueTime: {}}), "2026-10-27T00:00:00.000Z");
+  assert.equal(dueOf({dueDate}), "2026-10-27T23:59:00.000Z");
+  assert.equal(dueOf({}), undefined);
 });
 
 const now = Date.parse("2026-10-24T12:00:00Z");
@@ -36,6 +51,8 @@ test("editable: your one Doc or Slides copy, else a teacher's file shared to edi
   assert.equal(editable(work({materials: [doc("shared", {share: "edit"})]})).title, "shared");
   assert.throws(() => editable(work({materials: [doc("handout", {share: "view"})]})), /no Doc or Slides of yours.*\n  doc .*handout/);
   assert.throws(() => editable(work({})), /^Error: "Lab" has no Doc or Slides of yours to edit$/);
+  const photo: Attachment = {title: "photo.jpg", url: "https://drive.google.com/file/d/y/view", kind: "file", readable: false};
+  assert.equal(editable(work({yours: [photo], materials: [doc("shared", {share: "edit"})]})).title, "shared");
 });
 
 test("progress: words a copy adds to its template, tags and header aside", () => {
@@ -59,4 +76,6 @@ test("progress sees images and ticks, not just words", () => {
 test("videosIn: links and embeds, once each", () => {
   const text = `<a href="https://www.youtube.com/watch?v=j8YfUEzBQ20&t=3">video</a> <a href="https://youtu.be/j8YfUEzBQ20">again</a>\n<video id="v" youtube="abcdefghijk">`;
   assert.deepEqual(videosIn(text), ["https://youtu.be/j8YfUEzBQ20", "https://youtu.be/abcdefghijk"]);
+  const more = `<a href="https://www.youtube.com/watch?feature=shared&amp;v=AAAAAAAAAAA">a</a> youtube.com/shorts/BBBBBBBBBBB https://www.youtube-nocookie.com/embed/CCCCCCCCCCC youtube.com/live/DDDDDDDDDDD`;
+  assert.deepEqual(videosIn(more), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD"].map((id) => `https://youtu.be/${id}`));
 });

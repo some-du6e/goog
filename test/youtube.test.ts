@@ -44,6 +44,7 @@ test("fixQuotes: mis-decoded smart quotes in English captions, and only there", 
   const bad = ["Iím", "doing", "weíre", "andÖ", "Itís", "ìhelloî"].map(w);
   assert.deepEqual(fixQuotes(bad, "en").map((x) => x.word), ["I’m", "doing", "we’re", "and…", "It’s", "“hello”"]);
   assert.deepEqual(fixQuotes(bad, "es").map((x) => x.word), bad.map((x) => x.word));
+  assert.deepEqual(fixQuotes([...bad, w("Peña"), w("ñ"), w("ó")], "en").slice(-3).map((x) => x.word), ["Peña", "–", "—"]);
   const fine = ["María", "said", "hi"].map(w);
   assert.deepEqual(fixQuotes(fine, "en"), fine);
 });

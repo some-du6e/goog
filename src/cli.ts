@@ -8,7 +8,7 @@ import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
 import {backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError} from "./format.ts";
-import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseWorkRef, type Attachment, type Work} from "./classroom.ts";
+import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseCourseRef, parseWorkRef, type Attachment, type Work} from "./classroom.ts";
 import {createDoc} from "./gdocs.ts";
 import {clock, parseVideo, timed, transcript} from "./youtube.ts";
 import {createDeck} from "./slides.ts";
@@ -69,8 +69,8 @@ Drive
   goog auth [status|import <token.json>|script [URL]|client <client_secret.json>]
 
 Classroom
-  goog classroom [class]        what's left to do in your classes (or one, by name or
-                                id): work not turned in that's due in the last two
+  goog classroom [class]        what's left to do in your classes (or one, by name, id
+                                or link): work not turned in that's due in the last two
                                 weeks or later, or undated and set this month, with
                                 your copy of each file. Most urgent first: due next,
                                 then missing, then undated
@@ -603,7 +603,8 @@ async function cmdClassroom(pos: string[], opts: {all: boolean; done: boolean; p
     for (const c of cs) out(`${c.id}  ${c.name}`);
     return;
   }
-  const ref = pos.length === 1 ? parseWorkRef(pos[0]) : null;
+  const course = pos.length === 1 ? parseCourseRef(pos[0]) : null;
+  const ref = pos.length === 1 && !course ? parseWorkRef(pos[0]) : null;
   if (ref) {
     const w = await getWork(ref);
     await measure([w], {materials: true});
@@ -615,7 +616,7 @@ async function cmdClassroom(pos: string[], opts: {all: boolean; done: boolean; p
     if (!m) throw new Error(`--due takes a number of days, like 7 or 7d (got "${opts.due}")`);
     days = Number(m[1]);
   }
-  const listed = (await listWork(pos.join(" ") || undefined))
+  const listed = (await listWork(course ?? (pos.join(" ") || undefined)))
     .filter((w) => days === undefined || (!!w.due && Date.parse(w.due) < Date.now() + days * 86_400_000));
   const ws = listed.filter((w) => (opts.done || !isDone(w)) && (opts.all || opts.done || isTodo(w)));
   // Older work the default leaves out, so nobody takes the list for everything.
@@ -665,7 +666,7 @@ async function cmdTranscript(arg: string, opts: {lang?: string; from?: string; t
   let videos: {id: string; title?: string}[];
   if (work) {
     const w = await getWork(work);
-    await measure([w], {materials: true});
+    await measure([w], {materials: true, yours: false});
     const urls = [...w.materials.filter((a) => a.kind === "youtube").map((a) => ({url: a.url, title: a.title})), ...(w.videos ?? []).map((v) => ({url: v.url, title: `linked in "${v.in}"`}))];
     videos = urls.map((v) => ({id: parseVideo(v.url)!, title: v.title})).filter((v, i, all) => v.id && all.findIndex((o) => o.id === v.id) === i);
     if (!videos.length) throw new Error(`"${w.title}" has no YouTube videos, attached or linked from the teacher's files`);
@@ -674,7 +675,13 @@ async function cmdTranscript(arg: string, opts: {lang?: string; from?: string; t
     if (!id) throw new Error(`"${arg}" isn't a YouTube link, video id, or Classroom assignment`);
     videos = [{id}];
   }
-  const ts = (await Promise.all(videos.map((v) => transcript(v.id, {lang}))))
+  // One video without captions shouldn't cost the others.
+  const got = await Promise.allSettled(videos.map((v) => transcript(v.id, {lang})));
+  const failed = got.flatMap((r) => (r.status === "rejected" ? [String(r.reason?.message ?? r.reason)] : []));
+  if (failed.length === got.length) throw new Error(failed.join("\n"));
+  for (const f of failed) process.stderr.write(`goog: ${f}\n`);
+  videos = videos.filter((_, i) => got[i].status === "fulfilled");
+  const ts = got.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
     .map((t) => ({...t, words: t.words.filter((w) => w.start >= from && w.start < to)}));
   if (asJson) return json(ts.map((t, i) => ({...t, ...(videos[i].title ? {from: videos[i].title} : {}), text: t.words.map((w) => w.word).join(" ")})));
   ts.forEach((t, i) => {
@@ -693,7 +700,7 @@ function helpFor(cmd: string): string {
   const lines = HELP.split("\n");
   const picked: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!new RegExp(`^  goog ${cmd}\\b`).test(lines[i])) continue;
+    if (!lines[i].startsWith(`  goog ${cmd}`) || /\w/.test(lines[i][`  goog ${cmd}`.length] ?? "")) continue;
     picked.push(lines[i]);
     while (i + 1 < lines.length && /^ {3,}/.test(lines[i + 1])) picked.push(lines[++i]);
   }

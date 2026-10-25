@@ -85,14 +85,15 @@ export function json3Words(j: any): Word[] {
 }
 
 // Captions saved as Windows-1252 and read back as Mac Roman turn ’ “ ” …
-// into í ì î Ö ("Iím", "andÖ"). English has no í, so in an English track
-// that shows the pattern a few times, put them back.
+// into í ì î Ö ("Iím", "andÖ"), and – — into ñ ó. English has no í, so in
+// an English track that shows the pattern a few times, put them back. ñ and ó
+// only as words of their own, since names like Peña have them too.
 export function fixQuotes(words: Word[], lang: string): Word[] {
   if (!lang.startsWith("en")) return words;
   const odd = words.filter((w) => /\wí\w|Ö$/.test(w.word)).length;
   if (odd < 3) return words;
   const map: Record<string, string> = {"í": "’", "ì": "“", "î": "”", "Ö": "…", "ñ": "–", "ó": "—"};
-  return words.map((w) => ({...w, word: w.word.replace(/[íìîÖñó]/g, (c) => map[c])}));
+  return words.map((w) => ({...w, word: /^[ñó]$/.test(w.word) ? map[w.word] : w.word.replace(/[íìîÖ]/g, (c) => map[c])}));
 }
 
 async function fromYouTube(id: string, lang?: string): Promise<Transcript | {error: string}> {
