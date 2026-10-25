@@ -25,7 +25,9 @@ about 45 words a minute, top to bottom, through the API: no browser. It's
 slow (a 100-word answer is ~2.5 minutes), so always run it in the background
 and wait for `pushed`. Leave a blank line between paragraphs — one per line
 without them looks like a wall of text in the doc. If it's stopped partway,
-the same command picks up where it left off. Small fixes (under 10
+the same command picks up where it left off (unless the push had merged
+edits made in the doc since the last sync — then a stop can leave a
+conflict). Small fixes (under 10
 characters) still go in at once. `--wpm N` changes the speed. It won't run
 while `goog edit` watches the file. Typos are typed in then backspaced out
 every few sentences — that's on purpose, so revision-history detectors see a

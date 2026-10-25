@@ -436,7 +436,9 @@ async function pushOnce(file: string, opts: PushOpts): Promise<PushOutcome> {
   out.merged = act.merged;
   const target = be.parse(act.text);
   if (dryRun) {
-    const p = be.plan(remote, target);
+    // Plan with typing too, so the dry run shows what a typed push would
+    // actually send first (long inserts held back to one paragraph a pass).
+    const p = be.plan(remote, target, {typing: !!opts.typing});
     return {
       ...out, status: p.requests.length ? "pushed" : "unchanged", requests: p.requests.length, warnings: p.warnings,
       planned: p.requests, patch: patch(file, theirs, act.text, "doc", "after push"),

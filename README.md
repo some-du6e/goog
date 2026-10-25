@@ -38,7 +38,9 @@ goog help                  # everything else
   point; revision-history checkers flag a doc with no deletions as inhuman.
   Formatting is applied after a paragraph's words. Fixes under 10 characters
   go in at once. A push that's stopped partway carries on when it's run
-  again. Docs allows about 60 writes a minute, which sets the pace.
+  again — unless the push had to merge edits made in the doc since the last
+  sync; then a stop can still leave a conflict to resolve. Docs allows about
+  60 writes a minute, which sets the pace.
 
 - `goog skill install` gives Claude Code and Codex a skill with the
   pull/edit/push steps and the format, so they skip reading `goog help`

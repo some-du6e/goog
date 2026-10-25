@@ -234,6 +234,34 @@ test("a mid-pass kill saves the partial typing as the base, so the next push res
   assert.equal(remote.text, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
 });
 
+test("a typed push after a MERGE keeps onWrote/onSignal off — so a mid-pass stop can conflict", async () => {
+  // onWrote/onSignal are deliberately off when the push merged doc edits in
+  // (the file lacks them until the end), so a mid-pass stop leaves the base
+  // stale and a retry can conflict instead of resuming. README/SKILL.md
+  // qualify the resume promise with exactly this; pin the wiring.
+  const f = fileIn("typed-merge.goog");
+  const remote = fakeDoc(doc("Q1?", "Q2?", "Q3?"));
+  await S.pull(ID, f, {kind: "doc"});
+  // Both sides change different lines: the file answers Q2, the doc rewords
+  // Q1 — different regions, so they merge cleanly.
+  writeFileSync(f, doc("Q1?", "Q2?", "Answer two.", "Q3?"));
+  remote.text = doc("Q1, reworded?", "Q2?", "Q3?");
+  const be = backends.doc as any;
+  const push = be.push;
+  be.push = async (_id: string, _target: any, opts: any) => {
+    assert.equal(opts.onWrote, undefined, "onWrote must stay off after a merge");
+    assert.equal(opts.onSignal, undefined, "onSignal must stay off after a merge");
+    throw new Error("killed");
+  };
+  await assert.rejects(S.push(f, {typing: {wpm: 45, sleep: async () => {}}}), /killed/);
+  be.push = push;
+  // The kill saved no base (onWrote was off), so the next push still has to
+  // merge — it does, and lands both sides.
+  const r = await S.push(f, {typing: {wpm: 45, sleep: async () => {}}});
+  assert.equal(r.status, "pushed");
+  assert.equal(remote.text, doc("Q1, reworded?", "Q2?", "Answer two.", "Q3?"));
+});
+
 test("a save made while push reads the doc isn't overwritten", async () => {
   const f = fileIn("race-pull.goog");
   const remote = fakeDoc(doc("one", "two", "three"));

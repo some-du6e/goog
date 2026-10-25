@@ -29,7 +29,7 @@ export interface Backend {
   fetchRev(id: string): Promise<string>;
   parse(text: string): any; // throws FormatError
   serialize(target: any): string;
-  plan(f: Fetched, target: any): {requests: unknown[]; warnings: string[]};
+  plan(f: Fetched, target: any, opts?: {typing?: boolean}): {requests: unknown[]; warnings: string[]};
   // `typing`, `onWrote` (the doc after each pass's writes) and `onSignal`
   // (called on Ctrl+C/kill mid-push, before the process dies) are docs only.
   push(id: string, target: any, opts: {rev?: string; first: Fetched; typing?: Typing; onWrote?: (f: Fetched) => void; onSignal?: () => Promise<void>}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
@@ -47,7 +47,7 @@ const docs: Backend = {
   fetchRev,
   parse: parseDoc,
   serialize: serializeDoc,
-  plan: (f, target) => planDoc(f.remote, target),
+  plan: (f, target, opts) => planDoc(f.remote, target, opts),
   async push(id, target, opts) {
     const onWrote = opts.onWrote && ((r: PlanRemote) => opts.onWrote!({text: serializeDoc(r.doc), rev: r.doc.rev, remote: r}));
     const onSignal = opts.onSignal && (async () => opts.onSignal!());
