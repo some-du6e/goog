@@ -273,7 +273,7 @@ export interface PullResult {
   hash: string;
   replaced: boolean;
   images: string[]; // saved copies of the doc's images, see imagesDir
-  drawing?: boolean; // the deck's pictures are being saved in the background; goog pics waits
+  drawing?: boolean; // decks only: the pictures are being drawn in the background (goog pics waits); false if the draw couldn't start
 }
 
 // Where pull saves a file's images: cer.goog -> cer.files/
@@ -342,7 +342,7 @@ export interface PushOutcome {
   warnings: string[];
   hash: string; // hash of the file content as goog left it
   savedDuring: boolean; // the file was saved again meanwhile: that save isn't in the doc yet
-  drawing?: boolean; // the deck's changed slides are being drawn again in the background; goog pics waits
+  drawing?: boolean; // decks only: the changed slides are being drawn again (goog pics waits); false if the draw couldn't start
   planned?: unknown[]; // --dry-run: the first batch of requests
   patch?: string; // --dry-run: what would change in the doc, as a unified diff
 }

@@ -105,7 +105,7 @@ Classroom
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
 pics, ls, new, stop, skill, classroom, transcript, edit (one event per line), log,
-and errors ({"ok":false,"error":…}). A deck's pull and push say "drawing":true
+and errors ({"ok":false,"error":…}). A deck's pull, push and edit say "drawing":true
 while the slide pictures are drawn (false if the draw couldn't start); goog
 pics --json lists them once they're done.
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
@@ -483,11 +483,12 @@ async function cmdEditBackground(id: string, file: string, extra: string[], asJs
     if (ready || Date.now() > deadline) {
       child.unref();
       const status = ready ? s!.status : "starting";
-      if (asJson) json({ok: true, file, id, pid: child.pid, status, message: s?.message, images: savedImages(file)});
+      const drawing = drawingPid(imagesDir(file)) ? true : undefined;
+      if (asJson) json({ok: true, file, id, pid: child.pid, status, message: s?.message, images: savedImages(file), drawing});
       else {
         out(`watching ${show(file)} (pid ${child.pid}): ${status}${s?.message ? `: ${s.message}` : ""}`);
         out(`after saving: goog wait ${show(file)}   activity: goog log ${show(file)}   stop: goog stop ${show(file)}`);
-        if (drawingPid(imagesDir(file))) out(DRAWING_NOTE(file));
+        if (drawing) out(DRAWING_NOTE(file));
         else outImages(savedImages(file));
         outContents(file);
       }
@@ -835,10 +836,16 @@ export async function main(argv: string[]) {
       if (asJson) return json({ok: r.status !== "conflict", ...r});
       for (const w of r.warnings) out(`warning: ${w}`);
       const again = `${file} was saved again during the push; that save isn't in the doc yet, so run goog push again`;
-      if (r.savedDuring && r.status === "unchanged") return out(again);
-      const dry = r.dryRun;
       // Last, whatever happened: the deck may look different now.
-      const drawing = () => r.drawing && out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
+      const drawing = () => {
+        if (r.drawing) out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
+        else if (r.drawing === false) out(`couldn't start drawing the slides as pictures; is ${show(imagesDir(file))} writable?`);
+      };
+      if (r.savedDuring && r.status === "unchanged") {
+        out(again);
+        return drawing();
+      }
+      const dry = r.dryRun;
       if (r.status === "conflict") {
         out(dry
           ? `would conflict: the doc changed in the same places as the file (${r.conflicts} conflict(s)). A real push writes <<<<<<< markers into ${file}.`

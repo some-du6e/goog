@@ -274,6 +274,8 @@ test("a deck's pictures are drawn again whenever the deck may look different", a
     assert.equal(draws, 1);
     // Changed in the browser in a way the text can't show (a background).
     remote.rev = "r9";
+    assert.equal((await S.push(f, {dryRun: true})).drawing, undefined); // a dry run draws nothing
+    assert.equal(draws, 1);
     assert.equal((await S.push(f)).drawing, true);
     assert.equal(draws, 2);
     // A pushed edit.

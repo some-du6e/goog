@@ -29,7 +29,9 @@ goog help                  # everything else
   counts.
 - Exit codes: 0 ok, 1 error, 2 conflict, 3 timed out. `--json` works on
   `status`, `wait`, `push`, `pull`, `diff`, `check`, `pics`, `ls`, `new`, `stop`,
-  `skill`, `classroom`, `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
+  `skill`, `classroom`, `transcript`, `log` and `edit`. With `--json`, errors are printed as
+  `{"ok":false,"error":…}`. A deck's `pull`, `push` and `edit` say `"drawing":true` while the
+  slide pictures are drawn (`false` if the draw couldn't start).
 - `goog log <file>` shows what the watcher did: pushes, pulls, conflicts,
   retries.
 
