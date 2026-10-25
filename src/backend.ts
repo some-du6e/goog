@@ -30,8 +30,9 @@ export interface Backend {
   parse(text: string): any; // throws FormatError
   serialize(target: any): string;
   plan(f: Fetched, target: any): {requests: unknown[]; warnings: string[]};
-  // `typing` and `onWrote` (the doc after each pass's writes) are docs only.
-  push(id: string, target: any, opts: {rev?: string; first: Fetched; typing?: Typing; onWrote?: (f: Fetched) => void}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
+  // `typing`, `onWrote` (the doc after each pass's writes) and `onSignal`
+  // (called on Ctrl+C/kill mid-push, before the process dies) are docs only.
+  push(id: string, target: any, opts: {rev?: string; first: Fetched; typing?: Typing; onWrote?: (f: Fetched) => void; onSignal?: () => Promise<void>}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
   saveImages(f: Fetched, dir: string): Promise<{images: string[]; slides?: string[]}>;
 }
 
@@ -49,7 +50,8 @@ const docs: Backend = {
   plan: (f, target) => planDoc(f.remote, target),
   async push(id, target, opts) {
     const onWrote = opts.onWrote && ((r: PlanRemote) => opts.onWrote!({text: serializeDoc(r.doc), rev: r.doc.rev, remote: r}));
-    const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote, typing: opts.typing, onWrote});
+    const onSignal = opts.onSignal && (async () => opts.onSignal!());
+    const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote, typing: opts.typing, onWrote, onSignal});
     // A new item the file ticks is created unticked; say so, as for any other.
     if (res.requests && (await markChecked(id, res.remote.doc)) && ticksDiffer(res.remote.doc, target)
       && !res.warnings.includes(CHECKS_WARNING)) res.warnings.push(CHECKS_WARNING);

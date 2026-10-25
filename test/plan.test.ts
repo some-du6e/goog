@@ -266,6 +266,43 @@ test("a mid-typing failure saves the partial doc via onWrote so the next push re
   assert.equal(body(serialize(fromApi(sim.toApi()).doc)), `Q: life?\n${answer}`);
 });
 
+test("pushDoc calls onSignal on SIGTERM and unregisters it afterwards", async () => {
+  // The re-kill is the process's own business (a test runner that killed
+  // itself would fail for the wrong reason); what's testable here is that a
+  // signal during the push reaches onSignal, and that the listener goes away
+  // with the push so a later signal doesn't refetch a finished doc.
+  const sim = SimDoc.from("Q: life?\n");
+  const before = process.listenerCount("SIGTERM");
+  let fired = 0;
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  // Hold the first sleep so the signal lands mid-pass, however fast the sim is.
+  let release: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let slept = false;
+  const p = pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
+    io: io(sim),
+    typing: {
+      wpm: 45,
+      sleep: async () => {
+        if (!slept) {
+          slept = true;
+          await gate;
+        }
+      },
+    },
+    onSignal: async () => {
+      fired++;
+    },
+  });
+  await new Promise((r) => setTimeout(r, 10)); // let the push reach the held sleep
+  assert.equal(process.listenerCount("SIGTERM"), before + 1);
+  process.emit("SIGTERM", "SIGTERM");
+  assert.equal(fired, 1);
+  release!();
+  await p;
+  assert.equal(process.listenerCount("SIGTERM"), before);
+});
+
 test("typed progress counts keystrokes, so done never overshoots total and lands on it", async () => {
   const sim = SimDoc.from("Q: life?\n");
   const answer = "The answer to life, the universe and everything is forty-two.";

@@ -447,7 +447,16 @@ async function pushOnce(file: string, opts: PushOpts): Promise<PushOutcome> {
   // types the rest instead of seeing a conflict in the half-typed paragraph.
   // Not after a merge, though: the file lacks the doc's edits until the end.
   const onWrote = opts.typing && !act.merged ? (f: Fetched) => save(f.text, f.rev) : undefined;
-  const res = await be.push(id, target, {rev: remote.rev, first: remote, typing: opts.typing, onWrote});
+  // Ctrl+C or a kill mid-typing never reaches a catch, so the base would
+  // stay stale and the next push would conflict with the half-typed
+  // paragraph. Save the partial as the base before the process dies.
+  const onSignal = onWrote
+    ? async () => {
+        const f = await be.fetch(id);
+        onWrote(f);
+      }
+    : undefined;
+  const res = await be.push(id, target, {rev: remote.rev, first: remote, typing: opts.typing, onWrote, onSignal});
   out.requests = res.requests;
   out.warnings = res.warnings;
   out.status = res.requests ? "pushed" : "unchanged";

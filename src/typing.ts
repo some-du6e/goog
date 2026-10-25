@@ -104,10 +104,10 @@ export function flubs(chs: Chunk[], t: Pick<Typing, "random">): Step[] {
   // Deletions to spread across this paragraph: aim for ~10% of typed chars.
   // Short paragraphs get a little more (20%): at exactly 10% even a 30-char
   // one couldn't delete a 4-letter word, and zero deletions across the doc is
-  // what revision-history checkers flag. 20% can't overshoot the ratio
-  // ceiling below by itself (it allows del ≤ 0.2·total, and the ceiling trips
-  // at del/(text + del) > 0.25, i.e. del > 0.25·text/0.75 ≈ 0.33·text), so it
-  // never buys a flub the check has to skip — only ever one small one.
+  // what revision-history checkers flag. The ratio check below is what keeps
+  // even this generous budget from busting the 25% ceiling — on a multi-chunk
+  // paragraph the first chunk is short, so the running ratio, not the budget,
+  // is the guard that actually fires.
   let budget = Math.max(3, Math.round(total * 0.2));
   let deleted = 0;
   let inserted = 0;

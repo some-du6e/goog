@@ -119,9 +119,40 @@ const MAX_PASSES = 8;
 export async function pushDoc(
   id: string,
   target: Doc | Block[],
-  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing} = {},
+  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing; onSignal?: () => Promise<void>} = {},
 ): Promise<PushResult> {
   const io = opts.io ?? LIVE;
+  // A typed pass runs for minutes, so Ctrl+C or a kill lands mid-pass far more
+  // often than between passes. Save where the typing got to (like the catch
+  // below does for a failed write) so the next push resumes instead of
+  // conflicting, then re-signal so the exit code still says how we died.
+  const onSignal = async (sig: "SIGINT" | "SIGTERM") => {
+    try {
+      await opts.onSignal?.();
+    } finally {
+      process.kill(process.pid, sig);
+    }
+  };
+  if (opts.onSignal) {
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+  }
+  try {
+    return await pushDocPasses(id, target, opts, io);
+  } finally {
+    if (opts.onSignal) {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+    }
+  }
+}
+
+async function pushDocPasses(
+  id: string,
+  target: Doc | Block[],
+  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing},
+  io: DocsIO,
+): Promise<PushResult> {
   // New objects get their ids written into this copy as they're created.
   const want = structuredClone(target);
   let remote = opts.first ?? toRemote(await io.get(id));
