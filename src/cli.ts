@@ -8,7 +8,9 @@ import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
 import {backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError} from "./format.ts";
+import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseWorkRef, type Attachment, type Work} from "./classroom.ts";
 import {createDoc} from "./gdocs.ts";
+import {clock, parseVideo, timed, transcript} from "./youtube.ts";
 import {createDeck} from "./slides.ts";
 import {DRIVE, api} from "./google.ts";
 import {
@@ -65,13 +67,42 @@ Drive
   goog new <title> [--slides]   create a doc (or a deck) and print its id
   goog open <doc>               print the doc's URL
   goog auth [status|import <token.json>|script [URL]|client <client_secret.json>]
+
+Classroom
+  goog classroom [class]        what's left to do in your classes (or one, by name or
+                                id): work not turned in that's due in the last two
+                                weeks or later, or undated and set this month, with
+                                your copy of each file. Most urgent first: due next,
+                                then missing, then undated
+      --all                     everything not turned in, however old
+      --done                    turned-in and returned work too
+      --due DAYS                only work due within DAYS days (7 or 7d), missing
+                                work included
+      --full                    each assignment's whole instructions, not one line
+      --progress                how much of each copy of yours is filled in: "blank",
+                                or the words, images and ticks added to the teacher's
+                                template (reads each doc, so a few seconds)
+  goog classroom <assignment>   one assignment: instructions, the teacher's files,
+                                and yours, with its progress
+  goog classroom classes        your active classes
+  goog transcript <video|assignment>
+                                what a YouTube video says, a line per 30s with its
+                                time ([12:30] …); for an assignment, every video it
+                                attaches or its files link to. The uploader's captions
+                                when there are some, else YouTube's automatic ones;
+                                --lang es picks another language the video has;
+                                --from 2:00 --to 15:35 keeps just that part
+  <assignment> is its classroom.google.com link or the COURSE/WORK pair listed.
+  goog edit, pull, cat and open take an <assignment> too, for your Doc or Slides
+  copy in it. States: not turned in, missing (past due), turned-in, returned.
+  Times are this machine's time zone; --json gives due in UTC and dueLocal.
   goog skill [install|remove]   the skill that teaches coding agents (Claude Code,
                                 Codex) to edit docs with goog; status if none given
       --force                   install over a skill of the same name that isn't goog's
 
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
-ls, new, stop, skill, edit (one event per line), log, and errors ({"ok":false,"error":…}).
+ls, new, stop, skill, classroom, transcript, edit (one event per line), log, and errors ({"ok":false,"error":…}).
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
 
 Conflicts: when the doc and the file changed the same lines, the file gets
@@ -468,8 +499,11 @@ function outImages(images: string[]) {
   const n = (f: string) => Number(/slide-(\d+)/.exec(f)![1]);
   const slides = images.filter(isSlide).sort((a, b) => n(a) - n(b));
   const pics = images.filter((f) => !isSlide(f));
-  if (slides.length) out(`slides as pictures (look before moving things): ${slides.map(show).join("  ")}`);
-  if (pics.length) out(`images (named by their id): ${pics.map(show).join("  ")}`);
+  // Long lists as a folder and a pattern, so they don't bury the file.
+  if (slides.length > 4) out(`slides as pictures (look before moving things): ${show(dirname(slides[0]))}/slide-1.png … slide-${slides.length}.png`);
+  else if (slides.length) out(`slides as pictures (look before moving things): ${slides.map(show).join("  ")}`);
+  if (pics.length > 6) out(`${pics.length} images in ${show(dirname(pics[0]))}/, named by their id (<id>.png, .jpg …)`);
+  else if (pics.length) out(`images (named by their id): ${pics.map(show).join("  ")}`);
 }
 
 // When output goes to a program (an agent's shell), it gets the file too, so
@@ -517,6 +551,155 @@ function cmdLog(arg: string | undefined, n: number, asJson: boolean) {
   }
 }
 
+// A Classroom assignment link stands for your own copy of its doc.
+async function docRef(arg: string) {
+  const w = parseWorkRef(arg);
+  return w ? resolveRef(editable(await getWork(w)).url) : resolveRef(arg);
+}
+
+function outWork(w: Work, full: boolean, instructions = false) {
+  // Undated work says when it was set, which also tells apart assignments
+  // that share a title.
+  const due = w.dueLocal ? `due ${w.dueLocal}` : `no due date, set ${new Date(w.created).toLocaleDateString("en-US", {month: "short", day: "numeric"})}`;
+  const state = w.missing ? `missing, ${w.daysLate} day${w.daysLate === 1 ? "" : "s"} late` : w.state === "assigned" ? "not turned in" : w.state;
+  out(`${w.course} › ${w.title}`);
+  out(`  ${[due, state, w.points ? `${w.points} pts` : "", `id ${w.courseId}/${w.id}`].filter(Boolean).join(" · ")}`);
+  const about = w.description?.trim().replace(/\s+/g, " ");
+  if (!full && about) out(instructions ? `  ${w.description!.trim().replace(/\n\s*\n/g, "\n").replace(/\n/g, "\n  ")}` : `  ${about.length > 100 ? `${about.slice(0, 99)}… (--full)` : about}`);
+  const unreadable = (a: Attachment) => (a.readable || a.kind === "youtube" || a.kind === "link" ? "" : " (goog can't open it)");
+  if (full) {
+    out(`  ${w.url}`);
+    out(w.description?.trim() ? `\n${w.description.trim().replace(/^/gm, "  ")}\n` : `  no instructions on the assignment${w.materials.length ? "; they're likely in the teacher's files" : ""}`);
+    const share: Record<string, string> = {"student-copy": " (template: you get your own copy)", edit: " (shared to edit)"};
+    for (const a of w.materials) out(`  teacher's ${a.kind}${share[a.share ?? ""] ?? ""}: ${a.title}  ${a.url}${unreadable(a)}`);
+    for (const v of w.videos ?? []) out(`  video linked in "${v.in}": ${v.url}`);
+    if (w.videos?.length || w.materials.some((a) => a.kind === "youtube")) out(`  goog transcript ${w.courseId}/${w.id} prints what the videos say`);
+  }
+  for (const a of w.yours) {
+    const n = (k: number, one: string) => `${k} ${one}${k === 1 ? "" : "s"}`;
+    const progress = isBlank(a) ? "blank, "
+      : a.added !== undefined ? `${[n(a.added, "word"), a.objectsAdded ? n(a.objectsAdded, "image/object") : "", a.ticksAdded ? n(a.ticksAdded, "tick") : ""].filter(Boolean).join(", ")} added, `
+      : a.wordsTotal !== undefined ? `${n(a.wordsTotal, "word")} (no template to compare with, so some may be the teacher's), ` : "";
+    out(`  your ${a.kind}: ${progress}${a.title}  ${a.url}${unreadable(a)}`);
+  }
+  if (!w.yours.length && !full) {
+    const kinds = new Map<string, number>();
+    for (const a of w.materials) kinds.set(a.kind, (kinds.get(a.kind) ?? 0) + 1);
+    const noun = (k: string, n: number) => {
+      const one = k === "slides" ? "deck" : k === "youtube" ? "video" : k;
+      return `${n} ${one}${n > 1 ? "s" : ""}`;
+    };
+    const attached = kinds.size ? `; the teacher attached ${[...kinds].map(([k, n]) => noun(k, n)).join(", ")}` : "";
+    const template = w.materials.some((a) => a.share === "student-copy");
+    out(template ? `  no files of yours yet${attached}; your copy is made when you open the assignment in Classroom once`
+      : `  nothing of yours to edit${attached ? `${attached} to read` : ""}; the work is done elsewhere (a form, on paper, or a file you attach)`);
+  }
+}
+
+async function cmdClassroom(pos: string[], opts: {all: boolean; done: boolean; progress: boolean; full: boolean; due?: string}, asJson: boolean) {
+  if (pos[0] === "classes") {
+    const cs = await courses();
+    if (asJson) return json(cs);
+    for (const c of cs) out(`${c.id}  ${c.name}`);
+    return;
+  }
+  const ref = pos.length === 1 ? parseWorkRef(pos[0]) : null;
+  if (ref) {
+    const w = await getWork(ref);
+    await measure([w], {materials: true});
+    return asJson ? json(w) : outWork(w, true);
+  }
+  let days: number | undefined;
+  if (opts.due !== undefined) {
+    const m = /^(\d+)d?$/.exec(opts.due.trim());
+    if (!m) throw new Error(`--due takes a number of days, like 7 or 7d (got "${opts.due}")`);
+    days = Number(m[1]);
+  }
+  const listed = (await listWork(pos.join(" ") || undefined))
+    .filter((w) => days === undefined || (!!w.due && Date.parse(w.due) < Date.now() + days * 86_400_000));
+  const ws = listed.filter((w) => (opts.done || !isDone(w)) && (opts.all || opts.done || isTodo(w)));
+  // Older work the default leaves out, so nobody takes the list for everything.
+  const hidden = listed.filter((w) => !opts.all && !opts.done && !isDone(w) && !isTodo(w));
+  if (opts.progress) await measure(ws);
+  if (asJson) return json(ws);
+  const older = hidden.length
+    ? `${hidden.length} older not turned in (${hidden.filter((w) => w.missing).length} missing) not shown; --all lists them`
+    : "";
+  if (!ws.length && older) return out(`nothing recent to do; ${older}`);
+  if (!ws.length) return out(days !== undefined ? `nothing due in the next ${days} day${days === 1 ? "" : "s"}` : opts.done ? "no assignments" : "nothing to do (--done lists turned-in work too)");
+  const done = ws.filter(isDone).length;
+  const left = ws.filter((w) => !isDone(w));
+  const missing = left.filter((w) => w.missing).length;
+  const week = left.filter((w) => !w.missing && w.due && Date.parse(w.due) < Date.now() + 7 * 86_400_000).length;
+  out(`${left.length} not turned in: ${missing} missing, ${week} due in the next 7 days, ${left.filter((w) => !w.due).length} with no due date${done ? `; plus ${done} turned in` : ""}`);
+  if (older) out(older);
+  out("");
+  // Most urgent first: what can still be handed in on time, then late work
+  // (most recent first, as the likeliest to still count), then undated work.
+  const soon = left.filter((w) => w.due && !w.missing);
+  const late = left.filter((w) => w.missing).reverse();
+  const undated = left.filter((w) => !w.due).sort((a, b) => b.created.localeCompare(a.created));
+  const sections: [string, Work[]][] = [["Due next", soon], ["Missing", late], ["No due date", undated], ["Turned in", ws.filter(isDone)]];
+  for (const [name, list] of sections) {
+    if (!list.length) continue;
+    out(`== ${name} (${list.length})`);
+    for (const w of list) {
+      outWork(w, false, opts.full);
+      out("");
+    }
+  }
+}
+
+// A video, or every video an assignment shows or links from its files.
+async function cmdTranscript(arg: string, opts: {lang?: string; from?: string; to?: string}, asJson: boolean) {
+  const at = (v: string | undefined, flag: string) => {
+    if (v === undefined) return undefined;
+    const m = /^(?:(\d+):)?(\d+):(\d{1,2})$|^(\d+)$/.exec(v.trim());
+    if (!m) throw new Error(`${flag} takes a time like 15:35, 1:02:00 or 90 (seconds); got "${v}"`);
+    return m[4] !== undefined ? Number(m[4]) : Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  };
+  const from = at(opts.from, "--from") ?? 0;
+  const to = at(opts.to, "--to") ?? Infinity;
+  const lang = opts.lang;
+  const work = parseWorkRef(arg);
+  let videos: {id: string; title?: string}[];
+  if (work) {
+    const w = await getWork(work);
+    await measure([w], {materials: true});
+    const urls = [...w.materials.filter((a) => a.kind === "youtube").map((a) => ({url: a.url, title: a.title})), ...(w.videos ?? []).map((v) => ({url: v.url, title: `linked in "${v.in}"`}))];
+    videos = urls.map((v) => ({id: parseVideo(v.url)!, title: v.title})).filter((v, i, all) => v.id && all.findIndex((o) => o.id === v.id) === i);
+    if (!videos.length) throw new Error(`"${w.title}" has no YouTube videos, attached or linked from the teacher's files`);
+  } else {
+    const id = parseVideo(arg);
+    if (!id) throw new Error(`"${arg}" isn't a YouTube link, video id, or Classroom assignment`);
+    videos = [{id}];
+  }
+  const ts = (await Promise.all(videos.map((v) => transcript(v.id, {lang}))))
+    .map((t) => ({...t, words: t.words.filter((w) => w.start >= from && w.start < to)}));
+  if (asJson) return json(ts.map((t, i) => ({...t, ...(videos[i].title ? {from: videos[i].title} : {}), text: t.words.map((w) => w.word).join(" ")})));
+  ts.forEach((t, i) => {
+    if (i) out("");
+    const title = [t.title ? `"${t.title}"` : "", videos[i].title].filter(Boolean).join(", ");
+    const kind = t.auto ? "automatic captions, so expect misheard words" : "the uploader's captions";
+    const others = t.languages && t.languages.length > 1 ? `; also ${t.languages.filter((l) => l !== t.lang).join(", ")} (--lang)` : "";
+    const part = from || to < Infinity ? `, ${clock(from)}–${to < Infinity ? clock(to) : "end"} of it` : "";
+    out(`# ${t.url}${title ? `  ${title}` : ""}  (${clock(t.duration)}${part}, ${t.words.length} words, ${t.lang}, ${kind}${others})`);
+    out(timed(t.words));
+  });
+}
+
+// `goog <cmd> --help`: the lines of the help about that command, or all of it.
+function helpFor(cmd: string): string {
+  const lines = HELP.split("\n");
+  const picked: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!new RegExp(`^  goog ${cmd}\\b`).test(lines[i])) continue;
+    picked.push(lines[i]);
+    while (i + 1 < lines.length && /^ {3,}/.test(lines[i + 1])) picked.push(lines[++i]);
+  }
+  return picked.length ? picked.join("\n") : HELP;
+}
+
 export async function main(argv: string[]) {
   const [cmd, ...rest] = argv;
   const {values: flags, positionals: pos} = parseArgs({
@@ -537,10 +720,18 @@ export async function main(argv: string[]) {
       lines: {type: "string", short: "n"},
       help: {type: "boolean", short: "h"},
       slides: {type: "boolean"},
+      all: {type: "boolean"},
+      progress: {type: "boolean"},
+      due: {type: "string"},
+      full: {type: "boolean"},
+      done: {type: "boolean"},
+      lang: {type: "string"},
+      from: {type: "string"},
+      to: {type: "string"},
     },
   });
   const asJson = !!flags.json;
-  if (flags.help && cmd) return out(HELP);
+  if (flags.help && cmd) return out(helpFor(cmd));
   switch (cmd) {
     case undefined:
     case "help":
@@ -556,7 +747,7 @@ export async function main(argv: string[]) {
     case "auth":
       return cmdAuth(pos);
     case "edit": {
-      const ref = resolveRef(need(pos[0], "goog edit <doc> [-o FILE] [--bg]"));
+      const ref = await docRef(need(pos[0], "goog edit <doc> [-o FILE] [--bg]"));
       if (flags.pull && flags.push) throw new Error("pick one of --pull and --push");
       const file = resolve(flags.out ?? ref.file ?? `${ref.id}.goog`);
       // setInterval can't wait longer than about 24 days.
@@ -573,7 +764,7 @@ export async function main(argv: string[]) {
     case "log":
       return cmdLog(pos[0], count(flags.lines, 20, "-n"), asJson);
     case "pull": {
-      const ref = resolveRef(need(pos[0], "goog pull <doc> [-o FILE] [--force]"));
+      const ref = await docRef(need(pos[0], "goog pull <doc> [-o FILE] [--force]"));
       const file = flags.out ?? ref.file ?? `${ref.id}.goog`;
       const r = await pull(ref.id, file, {force: flags.force, kind: ref.kind});
       if (asJson) return json({ok: true, ...r, file: resolve(file)});
@@ -676,8 +867,12 @@ export async function main(argv: string[]) {
     case "wait":
       return cmdWait(pos[0], seconds(flags.timeout, 120), asJson);
     case "cat": {
-      const ref = resolveRef(need(pos[0], "goog cat <doc>"));
-      return process.stdout.write((await backends[await kindOf(ref.id, ref.kind)].fetch(ref.id)).text);
+      const ref = await docRef(need(pos[0], "goog cat <doc>"));
+      const kind = await kindOf(ref.id, ref.kind);
+      process.stdout.write((await backends[kind].fetch(ref.id)).text);
+      // cat leaves pictures out; on slides they're often the content.
+      if (kind === "slides") process.stderr.write("goog: images aren't in this text; goog pull saves each slide as a picture (<file>.files/slide-N.png)\n");
+      return;
     }
     case "ls": {
       const q = ["trashed = false", "(mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.presentation')"];
@@ -689,13 +884,18 @@ export async function main(argv: string[]) {
       for (const f of j.files) out(`${f.id}  ${f.mimeType.endsWith("presentation") ? "slides" : "doc   "}  ${f.modifiedTime.slice(0, 10)}  ${f.name}`);
       return;
     }
+    case "classroom":
+    case "class":
+      return cmdClassroom(pos, {all: !!flags.all, done: !!flags.done, progress: !!flags.progress, full: !!flags.full, due: flags.due}, asJson);
+    case "transcript":
+      return cmdTranscript(need(pos[0], "goog transcript <youtube link|assignment> [--lang CODE] [--from 0:00] [--to 15:35]"), {lang: flags.lang, from: flags.from, to: flags.to}, asJson);
     case "new": {
       const title = need(pos.join(" "), "goog new <title> [--slides]");
       const id = flags.slides ? await createDeck(title) : await createDoc(title);
       return asJson ? json({ok: true, id, url: backends[flags.slides ? "slides" : "doc"].url(id)}) : out(id);
     }
     case "open": {
-      const ref = resolveRef(need(pos[0], "goog open <doc>"));
+      const ref = await docRef(need(pos[0], "goog open <doc>"));
       return out(backends[await kindOf(ref.id, ref.kind)].url(ref.id));
     }
     default:
