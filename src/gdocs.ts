@@ -119,7 +119,7 @@ const MAX_PASSES = 8;
 export async function pushDoc(
   id: string,
   target: Doc | Block[],
-  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing; onSignal?: () => Promise<void>} = {},
+  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing; onSignal?: () => Promise<void>; signal?: {on(sig: string, fn: any): void; off(sig: string, fn: any): void; kill(sig: string): void}} = {},
 ): Promise<PushResult> {
   const io = opts.io ?? LIVE;
   // A typed pass runs for minutes, so Ctrl+C or a kill lands mid-pass far more
@@ -129,26 +129,37 @@ export async function pushDoc(
   // listeners come off first: with them still on, the re-kill would re-enter
   // this handler (and loop forever), and a second impatient Ctrl+C would start
   // another fetch instead of forcing the exit it expects.
+  // `signal` is the signal source/sink, process by default; tests pass a fake
+  // because the re-kill is a REAL signal — process.emit("SIGINT") in a test
+  // would make the handler kill the test runner.
+  const signal = opts.signal ?? {on: (s, f) => process.on(s as any, f), off: (s, f) => process.off(s as any, f), kill: (s) => process.kill(process.pid, s as any)};
+  const typingCtl = {aborted: false, inFlight: Promise.resolve()};
   const onSignal = async (sig: "SIGINT" | "SIGTERM") => {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
+    signal.off("SIGINT", onSignal);
+    signal.off("SIGTERM", onSignal);
+    // Freeze the typing before snapshotting the doc, and wait for any write
+    // already on the wire: a chunk that lands after the fetch would leave the
+    // base one chunk short, and the line-based merge can't express "doc is a
+    // prefix of base" — the very conflict this save exists to prevent.
+    typingCtl.aborted = true;
+    await typingCtl.inFlight;
     try {
       await opts.onSignal?.();
     } finally {
       // Even if the save fails (offline, doc deleted), die the way the signal
       // asked — not as an unhandled rejection with the wrong exit code.
-      process.kill(process.pid, sig);
+      signal.kill(sig);
     }
   };
   if (opts.onSignal) {
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
+    signal.on("SIGINT", onSignal);
+    signal.on("SIGTERM", onSignal);
   }
   try {
-    return await pushDocPasses(id, target, opts, io);
+    return await pushDocPasses(id, target, opts, io, typingCtl);
   } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
+    signal.off("SIGINT", onSignal);
+    signal.off("SIGTERM", onSignal);
   }
 }
 
@@ -157,6 +168,7 @@ async function pushDocPasses(
   target: Doc | Block[],
   opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing},
   io: DocsIO,
+  typingCtl: {aborted: boolean; inFlight: Promise<void>},
 ): Promise<PushResult> {
   // New objects get their ids written into this copy as they're created.
   const want = structuredClone(target);
@@ -186,15 +198,25 @@ async function pushDocPasses(
     const rev = pass === 0 ? opts.rev ?? remote.doc.rev : remote.doc.rev;
     const typed = !!opts.typing && p.requests.some((r) => typeable(r) || r.insertText?.text.includes("\n"));
     if (!typed) left--;
-    const res = await (async () => {
+    const res = await (async (): Promise<{replies?: any[]; writeControl?: {requiredRevisionId?: string} | undefined} | null> => {
       try {
         return opts.typing
-          ? await typeBatch(io, id, p.requests, rev, opts.typing)
+          ? await typeBatch(io, id, p.requests, rev, opts.typing, typingCtl)
           : await io.batch(id, {requests: p.requests, writeControl: rev ? {requiredRevisionId: rev} : undefined});
       } catch (e) {
+        // The signal handler stopped the typing and is snapshotting the doc
+        // itself (it kills the process after); don't race it with another
+        // fetch, and don't surface the internal abort as the push's error.
+        if (e instanceof TypingAborted) return null;
         // A mid-typing failure leaves the doc between the base and the file;
         // save where it got to so the next push resumes instead of conflicting.
-        if (opts.onWrote) {
+        // Not for a revision clash, though: then the doc also holds someone
+        // else's edit, and saving it as the base would make the automatic
+        // retry take the theirs-equals-base branch and push the file over that
+        // edit wholesale — the same fold-in the after-write rev check below
+        // refuses by throwing before onWrote.
+        const clash = e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message);
+        if (opts.onWrote && !clash) {
           try {
             opts.onWrote(toRemote(await io.get(id)));
           } catch {
@@ -204,6 +226,7 @@ async function pushDocPasses(
         throw e;
       }
     })();
+    if (!res) return {remote, requests, passes: pass, warnings};
     requests += p.requests.length;
     for (const c of p.created) c.apply(res.replies?.[p.requests.indexOf(c.req)]);
     remote = toRemote(await io.get(id));
@@ -227,29 +250,50 @@ async function pushDocPasses(
 // edited (the rev has moved on). Only the first is retried, once, without the
 // guard; the second rethrows so the push stops instead of typing into the
 // other edit.
-async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | undefined, t: Typing) {
+// Thrown when a signal stops the typing mid-step; pushDoc's handler is what
+// does the stopping, and it exits the process itself, so this only surfaces
+// if the process is still alive to see it (a second push sharing the ctl).
+class TypingAborted extends Error {}
+
+async function typeBatch(
+  io: DocsIO,
+  id: string,
+  requests: any[],
+  rev: string | undefined,
+  t: Typing,
+  ctl: {aborted: boolean; inFlight: Promise<void>},
+) {
   const sleep = t.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const replies: any[] = [];
   let guard = rev;
   const send = async (reqs: any[]): Promise<any[]> => {
-    try {
-      const res = await io.batch(id, {requests: reqs, writeControl: guard ? {requiredRevisionId: guard} : undefined});
-      // An unguarded write gets no writeControl back; refetch so the next
-      // write is guarded again rather than leaving the rest of the batch naked.
-      guard = res.writeControl?.requiredRevisionId ?? (guard ? undefined : toRemote(await io.get(id)).doc.rev);
-      return res.replies ?? reqs.map(() => ({}));
-    } catch (e) {
-      if (!guard || !(e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message))) throw e;
-      let now: string | undefined;
+    const call = (async () => {
       try {
-        now = toRemote(await io.get(id)).doc.rev;
-      } catch {
-        throw e; // can't tell whether it's a tick or an edit; don't type blind
+        const res = await io.batch(id, {requests: reqs, writeControl: guard ? {requiredRevisionId: guard} : undefined});
+        // An unguarded write gets no writeControl back; refetch so the next
+        // write is guarded again rather than leaving the rest of the batch naked.
+        guard = res.writeControl?.requiredRevisionId ?? (guard ? undefined : toRemote(await io.get(id)).doc.rev);
+        return res.replies ?? reqs.map(() => ({}));
+      } catch (e) {
+        if (!guard || !(e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message))) throw e;
+        let now: string | undefined;
+        try {
+          now = toRemote(await io.get(id)).doc.rev;
+        } catch {
+          throw e; // can't tell whether it's a tick or an edit; don't type blind
+        }
+        if (!now || now !== guard) throw e; // someone else edited; don't type into it
+        guard = undefined; // Docs forgot the rev; retry once without it
+        return send(reqs);
       }
-      if (!now || now !== guard) throw e; // someone else edited; don't type into it
-      guard = undefined; // Docs forgot the rev; retry once without it
-      return send(reqs);
-    }
+    })();
+    // Track the write that's on the wire so the signal handler can wait for
+    // it before snapshotting the doc (see pushDoc's onSignal).
+    ctl.inFlight = call.then(
+      () => {},
+      () => {},
+    );
+    return call;
   };
   // Budget total as the sum of every step's insert (typos included), so done
   // tracks keystrokes, not net text — a doubling typo can't push done past it.
@@ -269,7 +313,11 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
     const {index: _i, ...ctx} = location; // segmentId/tabId, for the backspaces
     let index = location.index;
     for (const s of steps[at++]) {
+      // A signal during the sleep or the write stops the typing here; the
+      // handler is snapshotting the doc and can't race another chunk landing.
+      if (ctl.aborted) throw new TypingAborted();
       await sleep(s.wait);
+      if (ctl.aborted) throw new TypingAborted();
       if ("insert" in s) {
         await send([{insertText: {location: {...location, index}, text: s.insert}}]);
         index += s.insert.length;

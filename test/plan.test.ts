@@ -231,6 +231,129 @@ test("a real edit mid-typing stops the push instead of typing into it", async ()
   assert.ok(fired, "the edit never landed");
 });
 
+test("a revision clash mid-typing does NOT save the base: the retry must merge the other edit in", async () => {
+  // Same hostile io as above, but with onWrote wired (as sync.ts does). The
+  // doc now holds someone else's edit; saving it as the base would make the
+  // automatic retry see theirs-equals-base and push the file over that edit.
+  const sim = SimDoc.from("Q: life?\n");
+  const x = io(sim);
+  let fired = false;
+  const hostile: DocsIO = {
+    get: x.get,
+    batch: async (id, b) => {
+      if (!fired && b.requests.some((r: any) => r.insertText && r.insertText.text.length > 3)) {
+        fired = true;
+        sim.rev++; // the other writer's edit moved the rev
+        throw new ApiError(400, "The required revision ID does not match the latest revision.");
+      }
+      return x.batch(id, b);
+    },
+  };
+  const saved: string[] = [];
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  await assert.rejects(
+    pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
+      io: hostile,
+      typing: TYPING,
+      onWrote: (r) => saved.push(body(serialize(r.doc))),
+    }),
+    /required revision/i,
+  );
+  assert.ok(fired, "the edit never landed");
+  assert.equal(saved.length, 0, "the clash saved a poisoned base");
+});
+
+// A fake signal source/sink: the handler's re-kill is a REAL signal, so a
+// test can't fire the handler through process.emit without dying from it.
+function fakeSignal() {
+  const handlers = new Map<string, Function[]>();
+  const killed: string[] = [];
+  return {
+    killed,
+    count: (sig: string) => handlers.get(sig)?.length ?? 0,
+    fire: (sig: string) => handlers.get(sig)?.forEach((h) => h(sig)),
+    on: (sig: string, fn: Function) => handlers.set(sig, [...(handlers.get(sig) ?? []), fn]),
+    off: (sig: string, fn: Function) => handlers.set(sig, (handlers.get(sig) ?? []).filter((h) => h !== fn)),
+    kill: (sig: string) => killed.push(sig),
+  };
+}
+
+test("pushDoc registers its signal handler only for the push's duration", async () => {
+  const sim = SimDoc.from("Q: life?\n");
+  const sig = fakeSignal();
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  // Hold the first sleep so the assertion lands mid-pass, however fast the sim is.
+  let release: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let slept = false;
+  const p = pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
+    io: io(sim),
+    typing: {
+      wpm: 45,
+      sleep: async () => {
+        if (!slept) {
+          slept = true;
+          await gate;
+        }
+      },
+    },
+    onSignal: async () => {},
+    signal: sig,
+  });
+  await new Promise((r) => setTimeout(r, 10)); // let the push reach the held sleep
+  assert.equal(sig.count("SIGTERM"), 1);
+  release!();
+  await p;
+  assert.equal(sig.count("SIGTERM"), 0);
+});
+
+test("a signal mid-typing freezes the typing before the base is snapshot", async () => {
+  // The handler's fetch must not race a chunk landing after it: hold the
+  // second write on the wire, fire the signal, and check the snapshot was
+  // taken only after that write finished — and that no further write goes out.
+  const sim = SimDoc.from("Q: life?\n");
+  const x = io(sim);
+  let calls = 0;
+  let release: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const writes: string[] = [];
+  const slow: DocsIO = {
+    get: x.get,
+    batch: async (id, b) => {
+      calls++;
+      writes.push(JSON.stringify(b.requests));
+      if (calls === 2) await gate; // the write the signal catches on the wire
+      return x.batch(id, b);
+    },
+  };
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  const order: string[] = [];
+  const sig = fakeSignal();
+  const p = pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
+    io: slow,
+    typing: TYPING,
+    onSignal: async () => {
+      order.push("signal");
+      const r = toRemote(await slow.get("sim"));
+      order.push(`snapshot:${body(serialize(r.doc)).length}`);
+    },
+    signal: sig,
+  });
+  await new Promise((r) => setTimeout(r, 20)); // reach the gated second write
+  sig.fire("SIGINT");
+  await new Promise((r) => setTimeout(r, 20)); // give a racing sleep a chance to fire
+  release!();
+  await p;
+  // After the signal, at most the in-flight write completes; nothing new sends.
+  assert.equal(calls, 2, `writes after the signal: ${writes.join(" | ")}`);
+  assert.deepEqual(order[0], "signal");
+  // The snapshot saw the gated write's text (it was awaited first), i.e. more
+  // than the doc had before it.
+  const len = Number(order[1].split(":")[1]);
+  assert.ok(len > "Q: life?".length, `snapshot too early: ${order.join(", ")}`);
+  assert.deepEqual(sig.killed, ["SIGINT"], "the handler must re-signal after saving");
+});
+
 test("a mid-typing failure saves the partial doc via onWrote so the next push resumes", async () => {
   // typeBatch throws after some chunks landed; pushDoc's catch must refetch
   // and call onWrote with the partial state before rethrowing.
@@ -264,39 +387,6 @@ test("a mid-typing failure saves the partial doc via onWrote so the next push re
   // Resume: the next pushDoc starts from the partial doc and finishes.
   const r = await pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {io: x, typing: TYPING});
   assert.equal(body(serialize(fromApi(sim.toApi()).doc)), `Q: life?\n${answer}`);
-});
-
-test("pushDoc registers its signal handler only for the push's duration", async () => {
-  // The handler re-kills with a REAL signal after saving (so the exit code
-  // still says how the process died), so a test can't fake-deliver one with
-  // process.emit — that kill would land for real. What's testable here is
-  // the registration: present while the push runs, gone once it ends, so a
-  // later signal can't refetch a finished doc.
-  const sim = SimDoc.from("Q: life?\n");
-  const before = process.listenerCount("SIGTERM");
-  const answer = "The answer to life, the universe and everything is forty-two.";
-  // Hold the first sleep so the assertion lands mid-pass, however fast the sim is.
-  let release: () => void;
-  const gate = new Promise<void>((r) => (release = r));
-  let slept = false;
-  const p = pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
-    io: io(sim),
-    typing: {
-      wpm: 45,
-      sleep: async () => {
-        if (!slept) {
-          slept = true;
-          await gate;
-        }
-      },
-    },
-    onSignal: async () => {},
-  });
-  await new Promise((r) => setTimeout(r, 10)); // let the push reach the held sleep
-  assert.equal(process.listenerCount("SIGTERM"), before + 1);
-  release!();
-  await p;
-  assert.equal(process.listenerCount("SIGTERM"), before);
 });
 
 test("typed progress counts keystrokes, so done never overshoots total and lands on it", async () => {
