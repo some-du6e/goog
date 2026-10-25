@@ -187,11 +187,12 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
     if (done) for (const [, i] of stale) drawn[key(i)] = hashes[i];
     else return drawThumbnails();
   });
-  try {
-    await Promise.all([saving, drawing]);
-  } finally {
-    writeFileSync(drawnPath, JSON.stringify(drawn));
-  }
+  // Both settled, so every slide drawn is recorded even if an image failed;
+  // and into place whole, so a killed draw can't leave half a file.
+  const settled = await Promise.allSettled([saving, drawing]);
+  writeFileSync(`${drawnPath}.${process.pid}`, JSON.stringify(drawn));
+  renameSync(`${drawnPath}.${process.pid}`, drawnPath);
+  for (const s of settled) if (s.status === "rejected") throw s.reason;
   // Pictures of slides that are gone.
   for (const f of readdirSync(dir)) {
     const m = /^slide-(\d+)\.png$/.exec(f);

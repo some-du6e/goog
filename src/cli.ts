@@ -508,6 +508,7 @@ async function cmdPics(arg: string | undefined, timeoutS: number, asJson: boolea
   const file = need(arg, "goog pics <file>");
   if (!existsSync(file)) throw new Error(`${file} doesn't exist`);
   const dir = imagesDir(file);
+  if (!existsSync(dir)) throw new Error(`${file} has no pictures yet; goog pull ${show(file)} draws them`);
   const w = await waitForDrawing(dir, timeoutS * 1000);
   if (w.status === "failed") throw new Error(w.message);
   if (w.status === "drawing") {

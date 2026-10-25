@@ -120,4 +120,9 @@ test("goog pics: times out with exit 3, and lists the pictures once they're draw
   r = goog("pics", "deck.goog", "--json");
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout).images, [join("deck.files", "slide-1.png")]);
+  // A deck that was never pulled here has nothing to wait for.
+  writeFileSync(join(tmp, "fresh.goog"), `<!-- goog slides ${ID} -->\n`);
+  r = goog("pics", "fresh.goog");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no pictures yet; goog pull/);
 });
