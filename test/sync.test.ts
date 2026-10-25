@@ -289,6 +289,9 @@ test("a deck's pictures are drawn again whenever the deck may look different", a
     assert.equal(r.status, "conflict");
     assert.equal(r.drawing, true);
     assert.equal(draws, 4);
+    // A draw that couldn't start isn't reported as drawing.
+    be.saveImagesLater = () => false;
+    assert.equal((await S.pull(ID, f, {kind: "doc", force: true})).drawing, false);
   } finally {
     delete be.saveImagesLater;
   }

@@ -106,7 +106,8 @@ Classroom
 --json gives machine-readable output on status, wait, push, pull, diff, check,
 pics, ls, new, stop, skill, classroom, transcript, edit (one event per line), log,
 and errors ({"ok":false,"error":…}). A deck's pull and push say "drawing":true
-while the slide pictures are drawn; goog pics --json lists them once they're done.
+while the slide pictures are drawn (false if the draw couldn't start); goog
+pics --json lists them once they're done.
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
 
 Conflicts: when the doc and the file changed the same lines, the file gets
@@ -812,8 +813,11 @@ export async function main(argv: string[]) {
       const file = flags.out ?? ref.file ?? `${ref.id}.goog`;
       const r = await pull(ref.id, file, {force: flags.force, kind: ref.kind});
       if (asJson) return json({ok: true, ...r, file: resolve(file)});
-      out(`${r.replaced ? "replaced" : "pulled into"} ${file}${r.drawing ? " (a Slides deck: goog help slides has the format)" : ""}`);
+      // drawing is set for decks only: false when the draw couldn't start.
+      const deck = r.drawing !== undefined;
+      out(`${r.replaced ? "replaced" : "pulled into"} ${file}${deck ? " (a Slides deck: goog help slides has the format)" : ""}`);
       if (r.drawing) out(DRAWING_NOTE(file));
+      else if (deck) out(`couldn't start drawing the slides as pictures; is ${show(imagesDir(file))} writable?`);
       else outImages(r.images);
       return outContents(file);
     }
@@ -833,17 +837,23 @@ export async function main(argv: string[]) {
       const again = `${file} was saved again during the push; that save isn't in the doc yet, so run goog push again`;
       if (r.savedDuring && r.status === "unchanged") return out(again);
       const dry = r.dryRun;
+      // Last, whatever happened: the deck may look different now.
+      const drawing = () => r.drawing && out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
       if (r.status === "conflict") {
-        return out(dry
+        out(dry
           ? `would conflict: the doc changed in the same places as the file (${r.conflicts} conflict(s)). A real push writes <<<<<<< markers into ${file}.`
           : `the doc changed in the same places as the file: ${r.conflicts} conflict(s) are marked with <<<<<<< in ${file}. Keep what you want, delete the marker lines, and push again.`);
+        return drawing();
       }
       if (r.status === "pulled") {
-        if (dry) out(`nothing to push; the doc has edits ${file} doesn't. A real push (or goog pull) brings them in:`);
-        else return out(`nothing to push; pulled edits made in the doc into ${file}`);
-        return out(r.patch ?? "");
+        if (dry) return out(`nothing to push; the doc has edits ${file} doesn't. A real push (or goog pull) brings them in:\n${r.patch ?? ""}`);
+        out(`nothing to push; pulled edits made in the doc into ${file}`);
+        return drawing();
       }
-      if (r.status === "unchanged") return out(r.rewrote ? `nothing to push; ${file} updated to match the doc` : "nothing to push; the doc already matches");
+      if (r.status === "unchanged") {
+        out(r.rewrote ? `nothing to push; ${file} updated to match the doc` : "nothing to push; the doc already matches");
+        return drawing();
+      }
       const notes = [r.merged ? "merged with edits made in the doc" : "", r.noBase ? `first push of ${file}, so the doc now matches it exactly` : "", r.rewrote ? `${file} updated to match` : ""].filter(Boolean);
       if (dry) {
         out(`would send ${r.requests} edit(s)${r.merged ? ", merged with edits made in the doc" : ""}${r.noBase ? `; ${file} was never synced, so the doc would be made to match it exactly` : ""}`);
@@ -851,7 +861,7 @@ export async function main(argv: string[]) {
       }
       out(`pushed ${r.requests} edit(s)${notes.length ? `; ${notes.join("; ")}` : ""}`);
       if (r.savedDuring) out(again);
-      if (r.drawing) out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
+      drawing();
       return;
     }
     case "diff": {

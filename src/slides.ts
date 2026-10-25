@@ -264,14 +264,22 @@ export function drawInBackground(id: string, dir: string): boolean {
       }
       // Ours until the child's pid is known.
       if (!claim(dir, process.pid)) continue;
-      const err = openSync(drawErrorPath(dir), "w");
-      const child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
-      closeSync(err);
-      child.on("error", (e) => writeFileSync(drawErrorPath(dir), `couldn't start the draw: ${e.message}`));
-      if (child.pid) writeFileSync(drawingPath(dir), mark(child.pid));
-      else rmSync(drawingPath(dir), {force: true});
+      let child;
+      try {
+        const err = openSync(drawErrorPath(dir), "w");
+        child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
+        closeSync(err);
+        child.on("error", (e) => writeFileSync(drawErrorPath(dir), `couldn't start the draw: ${e.message}`));
+      } catch {}
+      if (!child?.pid) {
+        rmSync(drawingPath(dir), {force: true});
+        return false;
+      }
+      // Into place whole, so nobody reads a half-written mark.
+      writeFileSync(`${drawingPath(dir)}.${process.pid}`, mark(child.pid));
+      renameSync(`${drawingPath(dir)}.${process.pid}`, drawingPath(dir));
       child.unref();
-      return !!child.pid;
+      return true;
     }
   } catch {}
   return false;

@@ -173,7 +173,12 @@ test("pictures: a sync during a draw asks it to go round again instead of starti
   // And never fails the sync, even when the pictures can't go anywhere.
   const notADir = join(tmp, "plain-file");
   writeFileSync(notADir, "");
-  assert.doesNotThrow(() => drawInBackground("deck", notADir));
+  assert.equal(drawInBackground("deck", notADir), false);
+  // A draw that can't start gives back the mark it took, or no draw would ever run again.
+  const stuck = fresh();
+  mkdirSync(join(stuck, ".draw-error"));
+  assert.equal(drawInBackground("deck", stuck), false);
+  assert.ok(!existsSync(join(stuck, ".drawing")));
 });
 
 test("pictures: without mutool, nothing is exported", async (t) => {
