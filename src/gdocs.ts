@@ -132,8 +132,13 @@ export async function pushDoc(
   const onSignal = async (sig: "SIGINT" | "SIGTERM") => {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    await opts.onSignal?.();
-    process.kill(process.pid, sig);
+    try {
+      await opts.onSignal?.();
+    } finally {
+      // Even if the save fails (offline, doc deleted), die the way the signal
+      // asked — not as an unhandled rejection with the wrong exit code.
+      process.kill(process.pid, sig);
+    }
   };
   if (opts.onSignal) {
     process.on("SIGINT", onSignal);
