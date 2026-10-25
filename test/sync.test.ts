@@ -259,3 +259,37 @@ test("pull leaves a file saved while it reads the doc, and takes an empty file",
   await S.pull(ID, e, {kind: "doc"});
   assert.equal(readFileSync(e, "utf8"), remote.text);
 });
+
+test("a deck's pictures are drawn again whenever the deck may look different", async () => {
+  const f = fileIn("redraw.goog");
+  const remote = fakeDoc(doc("one"));
+  const be = backends.doc as any;
+  let draws = 0;
+  be.saveImagesLater = () => (draws++, true);
+  try {
+    assert.equal((await S.pull(ID, f, {kind: "doc", force: true})).drawing, true);
+    assert.equal(draws, 1);
+    // Nothing changed on either side.
+    assert.equal((await S.push(f)).drawing, undefined);
+    assert.equal(draws, 1);
+    // Changed in the browser in a way the text can't show (a background).
+    remote.rev = "r9";
+    assert.equal((await S.push(f)).drawing, true);
+    assert.equal(draws, 2);
+    // A pushed edit.
+    writeFileSync(f, doc("two"));
+    assert.equal((await S.push(f)).status, "pushed");
+    assert.equal(draws, 3);
+    remote.rev = "r2";
+    // A conflict brings the doc's side into the file.
+    remote.text = doc("three");
+    remote.rev = "r10";
+    writeFileSync(f, doc("four"));
+    const r = await S.push(f);
+    assert.equal(r.status, "conflict");
+    assert.equal(r.drawing, true);
+    assert.equal(draws, 4);
+  } finally {
+    delete be.saveImagesLater;
+  }
+});

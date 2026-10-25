@@ -323,10 +323,7 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
   }
   const hash = writeText(file, text, crlf);
   writeBase(file, {id, text, rev: remote.rev});
-  if (be.saveImagesLater) {
-    be.saveImagesLater(id, imagesDir(file));
-    return {file, id, hash, replaced: exists, images: [], drawing: true};
-  }
+  if (be.saveImagesLater) return {file, id, hash, replaced: exists, images: [], drawing: be.saveImagesLater(id, imagesDir(file))};
   // Images are a convenience; a failed download doesn't fail the pull.
   const images = await be.saveImages!(remote, imagesDir(file)).catch(() => []);
   return {file, id, hash, replaced: exists, images};
@@ -392,12 +389,12 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   // The deck may look different now, so redraw the pictures of the slides
   // that changed.
   const redraw = () => {
-    if (be.saveImagesLater) {
-      be.saveImagesLater(id, imagesDir(file));
-      out.drawing = true;
-    }
+    if (be.saveImagesLater) out.drawing = be.saveImagesLater(id, imagesDir(file));
   };
   if (act.action === "none") {
+    // The file can't say everything (a background set in the browser), so
+    // the deck may have changed even though the text didn't.
+    if (remote.rev !== base?.rev) redraw();
     save(theirs, remote.rev);
     return out;
   }

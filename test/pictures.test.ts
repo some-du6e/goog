@@ -26,7 +26,7 @@ esac
 chmodSync(join(bin, "mutool"), 0o755);
 process.env.PATH = `${bin}:${process.env.PATH}`;
 
-const {saveDeckImages, drawingPid, drawInBackground, waitForDrawing} = await import("../src/slides.ts");
+const {saveDeckImages, drawingPid, drawInBackground, drawNow, waitForDrawing} = await import("../src/slides.ts");
 const {fromApi} = await import("../src/slides-read.ts");
 const {startedAt} = await import("../src/proc.ts");
 
@@ -45,11 +45,19 @@ function deckOf(n: number): any {
 }
 
 const calls = {thumbs: 0, exports: 0};
+// What a fetch of the deck returns, and what runs just after it's read.
+const served = {deck: deckOf(9) as any, fetches: 0, during: (): void => {}};
 function serve() {
   const real = globalThis.fetch;
   calls.thumbs = calls.exports = 0;
   globalThis.fetch = (async (url: any) => {
     const u = String(url);
+    if (/\/presentations\/[^/?]+$/.test(u)) {
+      served.fetches++;
+      const body = JSON.stringify(served.deck);
+      served.during();
+      return new Response(body, {headers: {"content-type": "application/json"}});
+    }
     const thumb = /\/pages\/([^/]+)\/thumbnail\?/.exec(u);
     if (thumb) {
       calls.thumbs++;
@@ -104,6 +112,9 @@ test("pictures: many stale slides come from one PDF export", async (t) => {
   t.after(serve());
   process.env.FAKE_PAGES = "12";
   const dir = fresh();
+  // Left by a draw that was killed; cleared, not drawn from.
+  mkdirSync(join(dir, ".pdf"));
+  writeFileSync(join(dir, ".pdf", "p1.png"), "stale");
   const raw = deckOf(12);
   await saveDeckImages(fromApi(structuredClone(raw)), dir);
   assert.deepEqual(calls, {thumbs: 0, exports: 1});
@@ -163,4 +174,33 @@ test("pictures: a sync during a draw asks it to go round again instead of starti
   const notADir = join(tmp, "plain-file");
   writeFileSync(notADir, "");
   assert.doesNotThrow(() => drawInBackground("deck", notADir));
+});
+
+test("pictures: without mutool, nothing is exported", async (t) => {
+  t.after(serve());
+  const path = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  t.after(() => (process.env.PATH = path));
+  await saveDeckImages(fromApi(deckOf(12)), fresh());
+  assert.deepEqual(calls, {thumbs: 12, exports: 0});
+});
+
+test("pictures: a draw goes round again for a sync made while it ran, then clears its mark", async (t) => {
+  t.after(serve());
+  const dir = fresh();
+  writeFileSync(join(dir, ".drawing"), `${process.pid} ${startedAt(process.pid) ?? ""}`);
+  served.fetches = 0;
+  served.deck = deckOf(9);
+  served.during = () => {
+    served.during = () => {};
+    // A push lands while the first round is fetching.
+    served.deck.slides[0].pageProperties = {pageBackgroundFill: {solidFill: {color: {rgbColor: {red: 1}}}}};
+    drawInBackground("deck", dir);
+  };
+  await drawNow("deck", dir);
+  assert.equal(served.fetches, 2);
+  assert.equal(calls.thumbs, 9 + 1);
+  assert.ok(!existsSync(join(dir, ".drawing")));
+  assert.ok(!existsSync(join(dir, ".redraw")));
+  assert.deepEqual(await waitForDrawing(dir, 1000), {status: "done"});
 });

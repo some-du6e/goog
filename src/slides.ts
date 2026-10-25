@@ -110,16 +110,20 @@ async function download(url: string): Promise<{type: string; data: Buffer}> {
 // slides missing from the export, an export too big for Drive).
 const PDF_FROM = 10;
 const run = promisify(execFile);
-let mutool: Promise<boolean> | undefined;
-const hasMutool = () => (mutool ??= run("mutool", ["-v"]).then(() => true, () => false));
+const mutool = new Map<string, Promise<boolean>>(); // by PATH
+const hasMutool = () => {
+  const path = process.env.PATH ?? "";
+  if (!mutool.has(path)) mutool.set(path, run("mutool", ["-v"]).then(() => true, () => false));
+  return mutool.get(path)!;
+};
 async function drawFromPdf(deckId: string, count: number, want: number[], slides: string[], dir: string): Promise<boolean> {
   if (want.length < PDF_FROM || !(await hasMutool())) return false;
   // Inside dir, so a draw that's killed leaves at most one, which the next
   // draw clears.
   const tmp = join(dir, ".pdf");
-  rmSync(tmp, {recursive: true, force: true});
-  mkdirSync(tmp);
   try {
+    rmSync(tmp, {recursive: true, force: true});
+    mkdirSync(tmp);
     const pdf = join(tmp, "deck.pdf");
     writeFileSync(pdf, (await api<{data: Buffer}>("GET", `${DRIVE}/files/${encodeURIComponent(deckId)}/export?mimeType=application/pdf`, undefined, {bytes: true})).data);
     if (Number((await run("mutool", ["show", pdf, "trailer/Root/Pages/Count"])).stdout.trim()) !== count) return false;
@@ -218,22 +222,46 @@ export function drawingPid(dir: string): number | undefined {
   return undefined;
 }
 
-// Never throws: the pictures are a convenience, and the sync that asked for
-// them has already worked.
-export function drawInBackground(id: string, dir: string) {
+// Takes the mark for pid, unless a live draw has it. Creating the file is
+// atomic, so two syncs at once can't both start a draw.
+function claim(dir: string, pid: number): boolean {
+  try {
+    const was = readFileSync(drawingPath(dir), "utf8");
+    if (drawingPid(dir)) return false;
+    if (readFileSync(drawingPath(dir), "utf8") === was) rmSync(drawingPath(dir)); // left by a draw that was killed
+  } catch {}
+  try {
+    writeFileSync(drawingPath(dir), mark(pid), {flag: "wx"});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Starts drawing dir's pictures, or has the running draw go round again.
+// False if neither could be done. Never throws: the pictures are a
+// convenience, and the sync that asked for them has already worked.
+export function drawInBackground(id: string, dir: string): boolean {
   try {
     mkdirSync(dir, {recursive: true});
-    if (drawingPid(dir)) {
-      writeFileSync(redrawPath(dir), "");
-      if (drawingPid(dir)) return; // else it finished just now without seeing .redraw
+    for (let tries = 0; tries < 3; tries++) {
+      if (drawingPid(dir)) {
+        writeFileSync(redrawPath(dir), "");
+        if (drawingPid(dir)) return true; // else it finished just now without seeing .redraw
+      }
+      // Ours until the child's pid is known.
+      if (!claim(dir, process.pid)) continue;
+      const err = openSync(drawErrorPath(dir), "w");
+      const child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
+      closeSync(err);
+      child.on("error", (e) => writeFileSync(drawErrorPath(dir), `couldn't start the draw: ${e.message}`));
+      if (child.pid) writeFileSync(drawingPath(dir), mark(child.pid));
+      else rmSync(drawingPath(dir), {force: true});
+      child.unref();
+      return !!child.pid;
     }
-    const err = openSync(drawErrorPath(dir), "w");
-    const child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
-    closeSync(err);
-    child.on("error", (e) => writeFileSync(drawErrorPath(dir), `couldn't start the draw: ${e.message}`));
-    if (child.pid) writeFileSync(drawingPath(dir), mark(child.pid));
-    child.unref();
   } catch {}
+  return false;
 }
 
 // What `goog draw` runs: fetch the deck and save its pictures, again for as
@@ -250,8 +278,7 @@ export async function drawNow(id: string, dir: string) {
       if (drawingPid(dir) === process.pid || !drawingPid(dir)) rmSync(drawingPath(dir), {force: true});
     }
     // A sync that asked for a redraw just as this draw finished.
-    if (!existsSync(redrawPath(dir)) || drawingPid(dir)) return;
-    writeFileSync(drawingPath(dir), mark(process.pid));
+    if (!existsSync(redrawPath(dir)) || !claim(dir, process.pid)) return;
   }
 }
 

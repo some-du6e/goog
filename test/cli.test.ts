@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
-import {existsSync, mkdirSync, mkdtempSync, readlinkSync, writeFileSync} from "node:fs";
+import {existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
@@ -102,4 +102,22 @@ test("log: -n takes a count from 1", () => {
   const r = goog("log", "-n", "0");
   assert.equal(r.status, 1);
   assert.match(r.stderr + r.stdout, /-n takes a whole number from 1/);
+});
+
+test("goog pics: times out with exit 3, and lists the pictures once they're drawn", async () => {
+  const {startedAt} = await import("../src/proc.ts");
+  const file = join(tmp, "deck.goog");
+  const dir = join(tmp, "deck.files");
+  writeFileSync(file, `<!-- goog slides ${ID} -->\n`);
+  mkdirSync(dir, {recursive: true});
+  writeFileSync(join(dir, "slide-1.png"), "png");
+  writeFileSync(join(dir, ".drawn.json"), "{}");
+  writeFileSync(join(dir, ".drawing"), `${process.pid} ${startedAt(process.pid) ?? ""}`); // this test stands in for the draw
+  let r = goog("pics", "deck.goog", "--timeout", "1", "--json");
+  assert.equal(r.status, 3);
+  assert.equal(JSON.parse(r.stdout).status, "drawing");
+  rmSync(join(dir, ".drawing"));
+  r = goog("pics", "deck.goog", "--json");
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).images, [join("deck.files", "slide-1.png")]);
 });

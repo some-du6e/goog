@@ -33,7 +33,7 @@ export interface Backend {
   // One or the other: save the images now, or in a background process (see
   // drawInBackground).
   saveImages?(f: Fetched, dir: string): Promise<string[]>;
-  saveImagesLater?(id: string, dir: string): void;
+  saveImagesLater?(id: string, dir: string): boolean;
 }
 
 const docs: Backend = {
