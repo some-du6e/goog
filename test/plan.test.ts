@@ -36,7 +36,8 @@ function io(sim: SimDoc): DocsIO & {batches: any[][]} {
       }
       batches.push(b.requests);
       const replies = sim.apply(b.requests);
-      return {replies, writeControl: {requiredRevisionId: `r${sim.rev}`}};
+      // The real API only returns writeControl when the request had one.
+      return {replies, ...(b.writeControl ? {writeControl: {requiredRevisionId: `r${sim.rev}`}} : {})};
     },
   };
 }
@@ -195,7 +196,7 @@ test("a real edit mid-typing stops the push instead of typing into it", async ()
   assert.ok(fired, "the edit never landed");
 });
 
-test("typed progress counts net characters, so done === total at paragraph end", async () => {
+test("typed progress counts keystrokes, so done never overshoots total and lands on it", async () => {
   const sim = SimDoc.from("Q: life?\n");
   const answer = "The answer to life, the universe and everything is forty-two.";
   const seen: Array<[number, number]> = [];
@@ -203,9 +204,12 @@ test("typed progress counts net characters, so done === total at paragraph end",
     io: io(sim),
     typing: {wpm: 45, sleep: async () => {}, onChunk: (d, t) => seen.push([d, t])},
   });
-  // done never overshoots total, and the last call lands exactly on it.
+  // total includes typo surplus (a doubling typo inserts one extra char), so
+  // done ends at total, not at the plain text length — and never overshoots.
   for (const [d, t] of seen) assert.ok(d <= t, `done ${d} > total ${t}`);
-  assert.deepEqual(seen.at(-1), [answer.length, answer.length]);
+  const last = seen.at(-1)!;
+  assert.equal(last[0], last[1]);
+  assert.ok(last[0] >= answer.length, `done ${last[0]} < text ${answer.length}`);
 });
 
 test("small edits send few requests, in one pass", async () => {

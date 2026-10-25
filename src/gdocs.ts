@@ -183,19 +183,30 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
   const send = async (reqs: any[]): Promise<any[]> => {
     try {
       const res = await io.batch(id, {requests: reqs, writeControl: guard ? {requiredRevisionId: guard} : undefined});
-      guard = res.writeControl?.requiredRevisionId;
+      // An unguarded write gets no writeControl back; refetch so the next
+      // write is guarded again rather than leaving the rest of the batch naked.
+      guard = res.writeControl?.requiredRevisionId ?? (guard ? undefined : toRemote(await io.get(id)).doc.rev);
       return res.replies ?? reqs.map(() => ({}));
     } catch (e) {
       if (!guard || !(e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message))) throw e;
-      const now = toRemote(await io.get(id)).doc.rev;
-      if (now && now !== guard) throw e; // someone else edited; don't type into it
+      let now: string | undefined;
+      try {
+        now = toRemote(await io.get(id)).doc.rev;
+      } catch {
+        throw e; // can't tell whether it's a tick or an edit; don't type blind
+      }
+      if (!now || now !== guard) throw e; // someone else edited; don't type into it
       guard = undefined; // Docs forgot the rev; retry once without it
       return send(reqs);
     }
   };
-  const total = requests.filter(typeable).reduce((n, r) => n + r.insertText.text.length, 0);
+  // Budget total as the sum of every step's insert (typos included), so done
+  // tracks keystrokes, not net text — a doubling typo can't push done past it.
+  const steps = requests.filter(typeable).map((r) => flubs(chunks(r.insertText.text, t), t));
+  const total = steps.flat().reduce((n, s) => n + ("insert" in s ? s.insert.length : 0), 0);
   let done = 0;
   let pending: any[] = [];
+  let at = 0;
   for (const r of requests) {
     if (!typeable(r)) {
       pending.push(r);
@@ -203,10 +214,10 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
     }
     if (pending.length) replies.push(...(await send(pending)));
     pending = [];
-    const {location, text} = r.insertText;
+    const {location} = r.insertText;
     const {index: _i, ...ctx} = location; // segmentId/tabId, for the backspaces
     let index = location.index;
-    for (const s of flubs(chunks(text, t), t)) {
+    for (const s of steps[at++]) {
       await sleep(s.wait);
       if ("insert" in s) {
         await send([{insertText: {location: {...location, index}, text: s.insert}}]);
@@ -215,7 +226,6 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
       } else {
         await send([{deleteContentRange: {range: {startIndex: index - s.del, endIndex: index, ...ctx}}}]);
         index -= s.del;
-        done -= s.del;
       }
       t.onChunk?.(done, total);
     }
