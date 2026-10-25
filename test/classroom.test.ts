@@ -79,6 +79,6 @@ test("progress sees images and ticks, not just words", () => {
 test("videosIn: links and embeds, once each", () => {
   const text = `<a href="https://www.youtube.com/watch?v=j8YfUEzBQ20&t=3">video</a> <a href="https://youtu.be/j8YfUEzBQ20">again</a>\n<video id="v" youtube="abcdefghijk">`;
   assert.deepEqual(videosIn(text), ["https://youtu.be/j8YfUEzBQ20", "https://youtu.be/abcdefghijk"]);
-  const more = `<a href="https://www.youtube.com/watch?feature=shared&amp;v=AAAAAAAAAAA">a</a> youtube.com/shorts/BBBBBBBBBBB https://www.youtube-nocookie.com/embed/CCCCCCCCCCC youtube.com/live/DDDDDDDDDDD https://www.YouTube.com/watch?v=EEEEEEEEEEE https://www.youtube.com/embed/videoseries?list=PLx youtube.com/@channel`;
-  assert.deepEqual(videosIn(more), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD", "EEEEEEEEEEE"].map((id) => `https://youtu.be/${id}`));
+  const more = `<a href="https://www.youtube.com/watch?feature=shared&amp;v=AAAAAAAAAAA">a</a> youtube.com/shorts/BBBBBBBBBBB https://www.youtube-nocookie.com/embed/CCCCCCCCCCC youtube.com/live/DDDDDDDDDDD https://www.YouTube.com/watch?v=EEEEEEEEEEE https://www.youtube.com/embed/videoseries?list=PLx youtube.com/@channel https://fakeyoutube.com/watch?v=FFFFFFFFFFF (see https://youtu.be/GGGGGGGGGGG).`;
+  assert.deepEqual(videosIn(more), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD", "EEEEEEEEEEE", "GGGGGGGGGGG"].map((id) => `https://youtu.be/${id}`));
 });

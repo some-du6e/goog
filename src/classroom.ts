@@ -97,7 +97,7 @@ export function parseCourseRef(arg: string): string | null {
 }
 
 const KIND: Record<string, string> = {document: "doc", presentation: "slides", spreadsheets: "sheet", forms: "form", drawings: "drawing"};
-const GOOGLE = new Set(Object.values(KIND));
+const GOOGLE = new Set(["doc", "slides", "sheet", "drawing"]); // what a copy of yours can be
 
 function attachment(m: any): Attachment | null {
   const f = m.driveFile?.driveFile ?? m.driveFile;
@@ -272,12 +272,12 @@ function templateOf(w: Work, a: Attachment): Attachment | undefined {
 // YouTube videos a .goog text links to or embeds.
 export function videosIn(text: string): string[] {
   const ids = new Set<string>();
-  const links = /(?:[\w-]+\.)?(?:youtube(?:-nocookie)?\.com|youtu\.be)\/[^\s"<>]*|youtube="([\w-]{11})"/gi;
+  const links = /(?<![\w-])(?:[\w-]+\.)?(?:youtube(?:-nocookie)?\.com|youtu\.be)\/[^\s"<>]*|youtube="([\w-]{11})"/gi;
   for (const m of text.matchAll(links)) {
     if (m[1]) ids.add(m[1]);
     else {
       try {
-        const id = parseVideo(m[0].replace(/&amp;/g, "&"));
+        const id = parseVideo(m[0].replace(/&amp;/g, "&").replace(/[.,;:!?)\]']+$/, ""));
         if (id) ids.add(id);
       } catch {} // a channel, playlist or search page
     }

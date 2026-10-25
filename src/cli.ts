@@ -668,7 +668,14 @@ async function cmdTranscript(arg: string, opts: {lang?: string; from?: string; t
     const w = await getWork(work);
     await measure([w], {materials: true, yours: false});
     const urls = [...w.materials.filter((a) => a.kind === "youtube").map((a) => ({url: a.url, title: a.title})), ...(w.videos ?? []).map((v) => ({url: v.url, title: `linked in "${v.in}"`}))];
-    videos = urls.map((v) => ({id: parseVideo(v.url)!, title: v.title})).filter((v, i, all) => v.id && all.findIndex((o) => o.id === v.id) === i);
+    const idOf = (url: string) => {
+      try {
+        return parseVideo(url);
+      } catch {
+        return null; // a playlist
+      }
+    };
+    videos = urls.map((v) => ({id: idOf(v.url)!, title: v.title})).filter((v, i, all) => v.id && all.findIndex((o) => o.id === v.id) === i);
     if (!videos.length) throw new Error(`"${w.title}" has no YouTube videos, attached or linked from the teacher's files`);
   } else {
     const id = parseVideo(arg);
@@ -683,7 +690,10 @@ async function cmdTranscript(arg: string, opts: {lang?: string; from?: string; t
     error: r.status === "rejected" ? String(r.reason?.message ?? r.reason) : undefined,
   }));
   const failed = got.flatMap((g) => (g.error ? [g.error] : []));
-  if (failed.length === got.length) throw new Error(failed.join("\n"));
+  if (failed.length === got.length) {
+    if (!asJson) throw new Error(failed.join("\n"));
+    process.exitCode = 1;
+  }
   if (asJson) {
     return json(got.map((g) => (g.t ? {...g.t, ...(g.from ? {from: g.from} : {}), text: g.t.words.map((w) => w.word).join(" ")}
       : {id: g.id, url: `https://youtu.be/${g.id}`, ...(g.from ? {from: g.from} : {}), error: g.error})));

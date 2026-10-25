@@ -36,7 +36,7 @@ export function parseVideo(arg: string): string | null {
   const s = arg.trim();
   if (/^[\w-]{11}$/.test(s)) return s;
   if (!/^(https?:\/\/)?([\w-]+\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(s)) return null;
-  const u = new URL(/^https?:/.test(s) ? s : `https://${s}`);
+  const u = new URL(/^https?:/i.test(s) ? s : `https://${s}`);
   const id = u.hostname.endsWith("youtu.be") ? u.pathname.slice(1).split("/")[0]
     : u.searchParams.get("v") ?? /^\/(?:embed|shorts|live|v)\/([\w-]{11})/.exec(u.pathname)?.[1];
   if (id === "videoseries") throw new Error(`"${arg}" is a playlist, not a video`);
@@ -89,12 +89,12 @@ export function json3Words(j: any): Word[] {
 }
 
 // Captions saved as Windows-1252 and read back as Mac Roman turn ’ “ ” …
-// into í ì î Ö ("Iím", "andÖ"), and – — into ñ ó. English has no í, so in
-// an English track that shows the pattern a few times, put them back. A real
+// into í ì î Ö ("Iím", "andÖ"), and – — into ñ ó. In an English track with
+// a few contractions spelled that way (María isn't one), put them back. A real
 // ñ or ó in such a track would have come out as Ò or Û, so every one is a dash.
 export function fixQuotes(words: Word[], lang: string): Word[] {
   if (!lang.startsWith("en")) return words;
-  const odd = words.filter((w) => /\wí\w|Ö$/.test(w.word)).length;
+  const odd = words.filter((w) => /\wí(s|t|m|d|re|ll|ve)\W*$|\wÖ$/i.test(w.word)).length;
   if (odd < 3) return words;
   const map: Record<string, string> = {"í": "’", "ì": "“", "î": "”", "Ö": "…", "ñ": "–", "ó": "—"};
   return words.map((w) => ({...w, word: w.word.replace(/[íìîÖñó]/g, (c) => map[c])}));
@@ -112,7 +112,9 @@ async function fromYouTube(id: string, lang?: string): Promise<Transcript | {err
   if (status !== "OK") return {error: p.playabilityStatus?.reason ?? `YouTube says ${status ?? "nothing"}`};
   const list = p.captions?.playerCaptionsTracklistRenderer;
   const tracks: Track[] = list?.captionTracks ?? [];
-  const audio: string | undefined = list?.audioTracks?.[list?.defaultAudioTrackIndex ?? 0]?.audioTrackId?.split(".")[0];
+  // A dub's audio id ends .10 and the original's .4; the default can be a dub.
+  const audios: any[] = list?.audioTracks ?? [];
+  const audio: string | undefined = (audios.find((a) => /\.4$/.test(a.audioTrackId ?? "")) ?? audios[list?.defaultAudioTrackIndex ?? 0])?.audioTrackId?.split(".")[0];
   const languages = [...new Set(tracks.map((t) => t.languageCode))];
   if (!tracks.length) return {error: "it has no captions"};
   const t = pickTrack(tracks, lang, audio);

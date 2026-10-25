@@ -5,7 +5,7 @@ import {clock, fixQuotes, json3Words, parseVideo, pickTrack, timed} from "../src
 test("parseVideo: every YouTube link shape, and not other links", () => {
   const id = "j8YfUEzBQ20";
   for (const u of [id, `https://youtu.be/${id}?t=30`, `https://www.youtube.com/watch?v=${id}&list=x`, `youtube.com/embed/${id}`,
-    `https://m.youtube.com/shorts/${id}`, `https://www.youtube-nocookie.com/embed/${id}`]) assert.equal(parseVideo(u), id, u);
+    `https://m.youtube.com/shorts/${id}`, `https://www.youtube-nocookie.com/embed/${id}`, `HTTPS://WWW.YouTube.com/watch?v=${id}`]) assert.equal(parseVideo(u), id, u);
   assert.equal(parseVideo("https://docs.google.com/document/d/abc/edit"), null);
   assert.equal(parseVideo("notes.goog"), null);
   assert.throws(() => parseVideo("https://www.youtube.com/channel/UCxyz"), /can't find a video id/);
@@ -47,6 +47,6 @@ test("fixQuotes: mis-decoded smart quotes in English captions, and only there", 
   assert.deepEqual(fixQuotes(bad, "en").map((x) => x.word), ["I’m", "doing", "we’re", "and…", "It’s", "“hello”"]);
   assert.deepEqual(fixQuotes(bad, "es").map((x) => x.word), bad.map((x) => x.word));
   assert.deepEqual(fixQuotes([...bad, w("itóthe"), w("ñ")], "en").slice(-2).map((x) => x.word), ["it—the", "–"]);
-  const fine = ["María", "said", "hi"].map(w);
+  const fine = ["María", "María", "María", "Peña"].map(w); // names, not mis-decoding
   assert.deepEqual(fixQuotes(fine, "en"), fine);
 });
