@@ -1,6 +1,6 @@
 ---
 name: goog
-description: Read and edit Google Docs and Slides from the shell with goog, as a text file, in seconds and without a browser. Use for any Google Docs or Slides link to read, fill in, answer, highlight, reformat, or rearrange, including schoolwork.
+description: Read and edit Google Docs and Slides from the shell with goog, as a text file, in seconds and without a browser. Use for any Google Docs or Slides link to read, fill in, answer, highlight, reformat, or rearrange, including schoolwork and Google Classroom assignments.
 ---
 
 # goog
@@ -17,6 +17,16 @@ description: Read and edit Google Docs and Slides from the shell with goog, as a
 3. **Push:** `goog push <file>`. Done when it prints `pushed`: the doc now
    matches the file, and that's the check. Any `warning:` lines name edits
    Docs couldn't take, and the file now shows what the doc really has.
+
+For a Google Classroom assignment link, `goog pull <assignment link>` pulls
+your own copy of its doc; `goog classroom <assignment link>` prints the
+instructions and every file (read the teacher's with `goog cat`).
+`goog classroom` lists what's left to do (`--due 7` for this week); add `--progress` to see which of
+your copies are still blank (it compares each with the teacher's template).
+Drawings, Sheets and PDFs are marked "goog can't open it". When the work comes from a
+video, `goog transcript <assignment link or YouTube link>` prints what it says
+with `[m:ss]` times (`--to 15:35` when the worksheet covers only that much);
+answer from that rather than from memory.
 
 ## Format
 

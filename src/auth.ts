@@ -16,6 +16,9 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/presentations",
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive",
+  // goog classroom: your classes, and their work with your submissions.
+  "https://www.googleapis.com/auth/classroom.courses.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
 ];
 
 const tokenCache = join(CACHE_DIR, "token.json");
@@ -171,7 +174,7 @@ export async function loginWithClient(client: {client_id: string; client_secret:
 
 // The Apps Script that `goog auth script` asks you to deploy.
 // Scopes come from the manifest; the advanced services there switch on the
-// Docs, Slides, Sheets and Drive APIs for the script's Cloud project, which the
+// Docs, Slides, Sheets, Drive and Classroom APIs for the script's Cloud project, which the
 // token needs.
 export const BROKER_SOURCE = `function doGet() {
   return ContentService.createTextOutput(JSON.stringify({token: ScriptApp.getOAuthToken()}))
@@ -190,6 +193,7 @@ export const BROKER_MANIFEST = {
       {userSymbol: "Slides", serviceId: "slides", version: "v1"},
       {userSymbol: "Sheets", serviceId: "sheets", version: "v4"},
       {userSymbol: "Drive", serviceId: "drive", version: "v3"},
+      {userSymbol: "Classroom", serviceId: "classroom", version: "v1"},
     ],
   },
 };
