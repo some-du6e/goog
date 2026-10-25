@@ -208,6 +208,32 @@ test("a typed push stopped partway carries on next time instead of conflicting",
   assert.equal(readFileSync(f, "utf8"), remote.text);
 });
 
+test("a mid-pass kill saves the partial typing as the base, so the next push resumes", async () => {
+  const f = fileIn("typed-midpass.goog");
+  const remote = fakeDoc(doc("Q1?", "Q2?"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+  const be = backends.doc as any;
+  const push = be.push;
+  // Kill DURING a pass: the pass's writes partially landed but onWrote was
+  // never called for it. pushDoc's catch should refetch and save the partial.
+  be.push = async (_id: string, _target: any, opts: any) => {
+    // Simulate typeBatch throwing mid-way: some writes landed.
+    remote.text = doc("Q1?", "Answer one.", "Q2?", "Ans");
+    // The real pushDoc catch refetches and calls onWrote with this state.
+    opts.onWrote({text: remote.text, rev: "r2", remote: null});
+    throw new Error("killed");
+  };
+  const typing = {wpm: 45, sleep: async () => {}};
+  await assert.rejects(S.push(f, {typing}), /killed/);
+  be.push = push;
+  // The base should now include the partial typing, so reconcile sees
+  // doc === base and just pushes the rest — no conflict.
+  const r = await S.push(f, {typing});
+  assert.equal(r.status, "pushed");
+  assert.equal(remote.text, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+});
+
 test("a save made while push reads the doc isn't overwritten", async () => {
   const f = fileIn("race-pull.goog");
   const remote = fakeDoc(doc("one", "two", "three"));

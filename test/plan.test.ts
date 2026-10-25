@@ -196,6 +196,41 @@ test("a real edit mid-typing stops the push instead of typing into it", async ()
   assert.ok(fired, "the edit never landed");
 });
 
+test("a mid-typing failure saves the partial doc via onWrote so the next push resumes", async () => {
+  // typeBatch throws after some chunks landed; pushDoc's catch must refetch
+  // and call onWrote with the partial state before rethrowing.
+  const sim = SimDoc.from("Q: life?\n");
+  const x = io(sim);
+  let calls = 0;
+  const killer: DocsIO = {
+    get: x.get,
+    batch: async (id, b) => {
+      calls++;
+      if (calls === 3) throw new Error("killed");
+      return x.batch(id, b);
+    },
+  };
+  const saved: string[] = [];
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  await assert.rejects(
+    pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
+      io: killer,
+      typing: TYPING,
+      onWrote: (r) => saved.push(body(serialize(r.doc))),
+    }),
+    /killed/,
+  );
+  // onWrote fired with the partial doc (some chunks of the answer typed).
+  assert.equal(saved.length, 1);
+  assert.ok(saved[0].startsWith("Q: life?"), saved[0]);
+  assert.ok(saved[0].length > "Q: life?".length, "no partial typing was saved");
+  assert.ok(saved[0].length < `Q: life?\n${answer}`.length, "saved the full text?");
+
+  // Resume: the next pushDoc starts from the partial doc and finishes.
+  const r = await pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {io: x, typing: TYPING});
+  assert.equal(body(serialize(fromApi(sim.toApi()).doc)), `Q: life?\n${answer}`);
+});
+
 test("typed progress counts keystrokes, so done never overshoots total and lands on it", async () => {
   const sim = SimDoc.from("Q: life?\n");
   const answer = "The answer to life, the universe and everything is forty-two.";

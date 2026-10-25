@@ -150,9 +150,24 @@ export async function pushDoc(
     const rev = pass === 0 ? opts.rev ?? remote.doc.rev : remote.doc.rev;
     const typed = !!opts.typing && p.requests.some((r) => typeable(r) || r.insertText?.text.includes("\n"));
     if (!typed) left--;
-    const res = opts.typing
-      ? await typeBatch(io, id, p.requests, rev, opts.typing)
-      : await io.batch(id, {requests: p.requests, writeControl: rev ? {requiredRevisionId: rev} : undefined});
+    const res = await (async () => {
+      try {
+        return opts.typing
+          ? await typeBatch(io, id, p.requests, rev, opts.typing)
+          : await io.batch(id, {requests: p.requests, writeControl: rev ? {requiredRevisionId: rev} : undefined});
+      } catch (e) {
+        // A mid-typing failure leaves the doc between the base and the file;
+        // save where it got to so the next push resumes instead of conflicting.
+        if (opts.onWrote) {
+          try {
+            opts.onWrote(toRemote(await io.get(id)));
+          } catch {
+            // the doc's gone or unreadable; the original error says more
+          }
+        }
+        throw e;
+      }
+    })();
     requests += p.requests.length;
     for (const c of p.created) c.apply(res.replies?.[p.requests.indexOf(c.req)]);
     remote = toRemote(await io.get(id));
