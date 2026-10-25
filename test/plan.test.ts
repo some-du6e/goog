@@ -266,16 +266,16 @@ test("a mid-typing failure saves the partial doc via onWrote so the next push re
   assert.equal(body(serialize(fromApi(sim.toApi()).doc)), `Q: life?\n${answer}`);
 });
 
-test("pushDoc calls onSignal on SIGTERM and unregisters it afterwards", async () => {
-  // The re-kill is the process's own business (a test runner that killed
-  // itself would fail for the wrong reason); what's testable here is that a
-  // signal during the push reaches onSignal, and that the listener goes away
-  // with the push so a later signal doesn't refetch a finished doc.
+test("pushDoc registers its signal handler only for the push's duration", async () => {
+  // The handler re-kills with a REAL signal after saving (so the exit code
+  // still says how the process died), so a test can't fake-deliver one with
+  // process.emit — that kill would land for real. What's testable here is
+  // the registration: present while the push runs, gone once it ends, so a
+  // later signal can't refetch a finished doc.
   const sim = SimDoc.from("Q: life?\n");
   const before = process.listenerCount("SIGTERM");
-  let fired = 0;
   const answer = "The answer to life, the universe and everything is forty-two.";
-  // Hold the first sleep so the signal lands mid-pass, however fast the sim is.
+  // Hold the first sleep so the assertion lands mid-pass, however fast the sim is.
   let release: () => void;
   const gate = new Promise<void>((r) => (release = r));
   let slept = false;
@@ -290,14 +290,10 @@ test("pushDoc calls onSignal on SIGTERM and unregisters it afterwards", async ()
         }
       },
     },
-    onSignal: async () => {
-      fired++;
-    },
+    onSignal: async () => {},
   });
   await new Promise((r) => setTimeout(r, 10)); // let the push reach the held sleep
   assert.equal(process.listenerCount("SIGTERM"), before + 1);
-  process.emit("SIGTERM", "SIGTERM");
-  assert.equal(fired, 1);
   release!();
   await p;
   assert.equal(process.listenerCount("SIGTERM"), before);

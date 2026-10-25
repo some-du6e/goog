@@ -125,13 +125,15 @@ export async function pushDoc(
   // A typed pass runs for minutes, so Ctrl+C or a kill lands mid-pass far more
   // often than between passes. Save where the typing got to (like the catch
   // below does for a failed write) so the next push resumes instead of
-  // conflicting, then re-signal so the exit code still says how we died.
+  // conflicting, then re-signal so the exit code still says how we died. Both
+  // listeners come off first: with them still on, the re-kill would re-enter
+  // this handler (and loop forever), and a second impatient Ctrl+C would start
+  // another fetch instead of forcing the exit it expects.
   const onSignal = async (sig: "SIGINT" | "SIGTERM") => {
-    try {
-      await opts.onSignal?.();
-    } finally {
-      process.kill(process.pid, sig);
-    }
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await opts.onSignal?.();
+    process.kill(process.pid, sig);
   };
   if (opts.onSignal) {
     process.on("SIGINT", onSignal);
@@ -140,10 +142,8 @@ export async function pushDoc(
   try {
     return await pushDocPasses(id, target, opts, io);
   } finally {
-    if (opts.onSignal) {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
-    }
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
   }
 }
 
