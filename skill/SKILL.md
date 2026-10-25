@@ -11,7 +11,8 @@ description: Read and edit Google Docs and Slides from the shell with goog, as a
 1. **Pull.** In a fresh directory: `goog pull <doc url or id>`. It prints the
    file's path, then the paths of the doc's images (`<id>.files/<img id>.png`),
    then the whole file. Open every image the text refers to before writing
-   about it.
+   about it. For a deck, `goog pics <file>` waits for the slide pictures and
+   lists them; look at them too.
 2. **Edit** the file in one go (a Python replace script or `sed`), using the
    format below.
 3. **Push:** `goog push <file>`. Done when it prints `pushed`: the doc now

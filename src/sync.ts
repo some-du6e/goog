@@ -15,6 +15,9 @@ import {CACHE_DIR, readJson, writeAtomic, writeJson} from "./config.ts";
 import {type Kind, backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError, markerLine, parseHeader} from "./format.ts";
 import {ApiError} from "./google.ts";
+import {isAlive, startedAt} from "./proc.ts";
+
+export {isAlive, startedAt};
 
 // ---------- refs ----------
 
@@ -172,29 +175,6 @@ export function forgetState(file: string) {
   rmSync(statePath(file), {force: true});
 }
 
-export function isAlive(pid: number | undefined): boolean {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e: any) {
-    return e?.code === "EPERM";
-  }
-}
-
-// When a process started (clock ticks since boot, from /proc/<pid>/stat), or
-// undefined where there's no /proc. A pid plus its start time names one
-// process, even after the pid is reused.
-export function startedAt(pid: number): string | undefined {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    return f[0] === "Z" || f[0] === "X" ? "dead" : f[19]; // a zombie has exited
-  } catch {
-    return undefined;
-  }
-}
-
 // The live `goog edit` for a file, if there is one. A watcher that died
 // without saying so can leave its pid to another program, which doesn't count
 // (so goog stop won't kill it).
@@ -293,7 +273,6 @@ export interface PullResult {
   hash: string;
   replaced: boolean;
   images: string[]; // saved copies of the doc's images, see imagesDir
-  slides?: string[]; // a deck's slides as pictures, slide-1.png, …
   drawing?: boolean; // the deck's pictures are being saved in the background; goog pics waits
 }
 
@@ -349,8 +328,8 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
     return {file, id, hash, replaced: exists, images: [], drawing: true};
   }
   // Images are a convenience; a failed download doesn't fail the pull.
-  const pics = await be.saveImages(remote, imagesDir(file)).catch((): {images: string[]; slides?: string[]} => ({images: []}));
-  return {file, id, hash, replaced: exists, images: pics.images, ...(pics.slides ? {slides: pics.slides} : {})};
+  const images = await be.saveImages!(remote, imagesDir(file)).catch(() => []);
+  return {file, id, hash, replaced: exists, images};
 }
 
 export interface PushOutcome {
@@ -366,6 +345,7 @@ export interface PushOutcome {
   warnings: string[];
   hash: string; // hash of the file content as goog left it
   savedDuring: boolean; // the file was saved again meanwhile: that save isn't in the doc yet
+  drawing?: boolean; // the deck's changed slides are being drawn again in the background; goog pics waits
   planned?: unknown[]; // --dry-run: the first batch of requests
   patch?: string; // --dry-run: what would change in the doc, as a unified diff
 }
@@ -409,6 +389,14 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   // The file was saved again while the doc was read: rewriting it would lose
   // that save. Leave everything as it was; the next sync starts over from it.
   const savedSince = () => (existsSync(file) ? readText(file).raw : null) !== ours.raw;
+  // The deck may look different now, so redraw the pictures of the slides
+  // that changed.
+  const redraw = () => {
+    if (be.saveImagesLater) {
+      be.saveImagesLater(id, imagesDir(file));
+      out.drawing = true;
+    }
+  };
   if (act.action === "none") {
     save(theirs, remote.rev);
     return out;
@@ -418,7 +406,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     if (savedSince()) return {...out, savedDuring: true};
     out.hash = writeText(file, act.text, ours.crlf);
     save(theirs, remote.rev);
-    be.saveImagesLater?.(id, imagesDir(file));
+    redraw();
     return {...out, status: "pulled", rewrote: true};
   }
   if (act.action === "conflict") {
@@ -428,6 +416,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     // The doc as it is now becomes the base: once the markers are resolved,
     // the resolved file is pushed over it, the way a merge commit works.
     save(theirs, remote.rev);
+    redraw();
     return {...out, status: "conflict", rewrote: true, conflicts: act.conflicts};
   }
   out.merged = act.merged;
@@ -443,7 +432,9 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   out.requests = res.requests;
   out.warnings = res.warnings;
   out.status = res.requests ? "pushed" : "unchanged";
-  if (res.requests) be.saveImagesLater?.(id, imagesDir(file));
+  // Even with nothing sent: a resolved conflict can leave the deck changed
+  // since the pictures were drawn.
+  redraw();
   const final = res.fetched.text;
   if (!savedSince()) {
     // Rewrite the file only if the doc came out different from it (a merge, or

@@ -28,8 +28,8 @@ goog help                  # everything else
   watcher has pushed that exact content. A status about an earlier save never
   counts.
 - Exit codes: 0 ok, 1 error, 2 conflict, 3 timed out. `--json` works on
-  `status`, `wait`, `push`, `pull`, `diff`, `check`, `ls`, `new`, `stop`, `skill`,
-  `classroom`, `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
+  `status`, `wait`, `push`, `pull`, `diff`, `check`, `pics`, `ls`, `new`, `stop`,
+  `skill`, `classroom`, `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
 - `goog log <file>` shows what the watcher did: pushes, pulls, conflicts,
   retries.
 

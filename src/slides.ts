@@ -3,12 +3,12 @@
 
 import {execFile, spawn} from "node:child_process";
 import {createHash} from "node:crypto";
-import {closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
-import {tmpdir} from "node:os";
+import {closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import {ApiError, DRIVE, api} from "./google.ts";
+import {isAlive, startedAt} from "./proc.ts";
 import type {Deck} from "./slides-format.ts";
 import {plan, type SPlan} from "./slides-plan.ts";
 import {type RemoteDeck, fromApi} from "./slides-read.ts";
@@ -110,9 +110,15 @@ async function download(url: string): Promise<{type: string; data: Buffer}> {
 // slides missing from the export, an export too big for Drive).
 const PDF_FROM = 10;
 const run = promisify(execFile);
-async function drawFromPdf(deckId: string, count: number, want: number[], slides: string[]): Promise<boolean> {
-  if (want.length < PDF_FROM) return false;
-  const tmp = mkdtempSync(join(tmpdir(), "goog-pdf-"));
+let mutool: Promise<boolean> | undefined;
+const hasMutool = () => (mutool ??= run("mutool", ["-v"]).then(() => true, () => false));
+async function drawFromPdf(deckId: string, count: number, want: number[], slides: string[], dir: string): Promise<boolean> {
+  if (want.length < PDF_FROM || !(await hasMutool())) return false;
+  // Inside dir, so a draw that's killed leaves at most one, which the next
+  // draw clears.
+  const tmp = join(dir, ".pdf");
+  rmSync(tmp, {recursive: true, force: true});
+  mkdirSync(tmp);
   try {
     const pdf = join(tmp, "deck.pdf");
     writeFileSync(pdf, (await api<{data: Buffer}>("GET", `${DRIVE}/files/${encodeURIComponent(deckId)}/export?mimeType=application/pdf`, undefined, {bytes: true})).data);
@@ -125,6 +131,18 @@ async function drawFromPdf(deckId: string, count: number, want: number[], slides
   } finally {
     rmSync(tmp, {recursive: true, force: true});
   }
+}
+
+// What a slide looks like, for telling whether its picture is out of date:
+// the API's page with its layout and master, so a background, chart or theme
+// changed in the browser counts too. contentUrls are signed afresh on every
+// fetch and speaker notes aren't drawn, so they're left out.
+function looks(remote: RemoteDeck, page: any): string {
+  const props = page.slideProperties ?? {};
+  const find = (list: any[] | undefined, id: string | undefined) => list?.find((p) => p.objectId === id);
+  const parts = [page, find(remote.raw.layouts, props.layoutObjectId), find(remote.raw.masters, props.masterObjectId)];
+  const json = JSON.stringify(parts, (k, v) => (k === "contentUrl" || k === "notesPage" ? undefined : v));
+  return createHash("sha1").update(json).digest("hex");
 }
 
 // Saves each picture on the deck as <dir>/<object id>.<ext> (skipping ones
@@ -153,7 +171,7 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
   try {
     drawn = JSON.parse(readFileSync(drawnPath, "utf8"));
   } catch {}
-  const hashes = remote.deck.slides.map((s) => createHash("sha1").update(JSON.stringify(s)).digest("hex"));
+  const hashes = remote.slides.map((s) => looks(remote, s.raw));
   const key = (i: number) => `slide-${i + 1}`;
   const stale = remote.slides.map((s, i) => [s.id, i] as const).filter(([, i]) => drawn[key(i)] !== hashes[i] || !existsSync(slides[i]));
   const drawThumbnails = () => inBatches(stale, 12, async ([page, i]) => {
@@ -161,7 +179,7 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
     writeFileSync(slides[i], (await download(t.contentUrl)).data);
     drawn[key(i)] = hashes[i];
   });
-  const drawing = drawFromPdf(remote.deck.id, remote.slides.length, stale.map(([, i]) => i), slides).then((done) => {
+  const drawing = drawFromPdf(remote.deck.id, remote.slides.length, stale.map(([, i]) => i), slides, dir).then((done) => {
     if (done) for (const [, i] of stale) drawn[key(i)] = hashes[i];
     else return drawThumbnails();
   });
@@ -181,62 +199,74 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
 // Drawing the slides is most of a pull's time (the thumbnail API takes about
 // a second a slide), so pull and push hand it to a detached `goog draw`
 // process and return once the text is written. <dir>/.drawing holds its pid
-// while it runs; `goog pics` waits for it. A newer draw replaces an older one.
+// and start time while it runs; `goog pics` waits for it. One draw runs at a
+// time: a sync while it runs leaves <dir>/.redraw, and the draw goes round
+// again once it's done, so a deck saved every few seconds still gets drawn.
 const BIN = fileURLToPath(new URL("../bin/goog.ts", import.meta.url));
 const drawingPath = (dir: string) => join(dir, ".drawing");
-export const drawErrorPath = (dir: string) => join(dir, ".draw-error");
+const redrawPath = (dir: string) => join(dir, ".redraw");
+const drawErrorPath = (dir: string) => join(dir, ".draw-error");
+const mark = (pid: number) => `${pid} ${startedAt(pid) ?? ""}`;
 
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e: any) {
-    return e?.code === "EPERM";
-  }
-};
-
-// The pid of the draw running for dir, if one is.
+// The pid of the draw running for dir, if one is. A pid whose start time
+// doesn't match has been reused by another program.
 export function drawingPid(dir: string): number | undefined {
   try {
-    const pid = Number(readFileSync(drawingPath(dir), "utf8"));
-    if (pid && alive(pid)) return pid;
+    const [pid, started] = readFileSync(drawingPath(dir), "utf8").trim().split(" ");
+    if (isAlive(Number(pid)) && (!started || started === startedAt(Number(pid)))) return Number(pid);
   } catch {}
   return undefined;
 }
 
+// Never throws: the pictures are a convenience, and the sync that asked for
+// them has already worked.
 export function drawInBackground(id: string, dir: string) {
-  mkdirSync(dir, {recursive: true});
-  const old = drawingPid(dir);
-  if (old) {
-    try {
-      process.kill(old);
-    } catch {}
-  }
-  rmSync(drawErrorPath(dir), {force: true});
-  const err = openSync(drawErrorPath(dir), "w");
-  const child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
-  closeSync(err);
-  writeFileSync(drawingPath(dir), String(child.pid));
-  child.unref();
-}
-
-// What `goog draw` runs: fetch the deck and save its pictures.
-export async function drawNow(id: string, dir: string) {
   try {
-    await saveDeckImages(await fetchDeck(id), dir);
-  } finally {
-    // Only clear the mark if it's still ours (a newer draw may have replaced it).
-    if (drawingPid(dir) === process.pid || !drawingPid(dir)) rmSync(drawingPath(dir), {force: true});
+    mkdirSync(dir, {recursive: true});
+    if (drawingPid(dir)) {
+      writeFileSync(redrawPath(dir), "");
+      if (drawingPid(dir)) return; // else it finished just now without seeing .redraw
+    }
+    const err = openSync(drawErrorPath(dir), "w");
+    const child = spawn(process.execPath, [...process.execArgv, BIN, "draw", id, dir], {detached: true, stdio: ["ignore", "ignore", err]});
+    closeSync(err);
+    child.on("error", (e) => writeFileSync(drawErrorPath(dir), `couldn't start the draw: ${e.message}`));
+    if (child.pid) writeFileSync(drawingPath(dir), mark(child.pid));
+    child.unref();
+  } catch {}
+}
+
+// What `goog draw` runs: fetch the deck and save its pictures, again for as
+// long as syncs keep asking.
+export async function drawNow(id: string, dir: string) {
+  for (;;) {
+    try {
+      do {
+        rmSync(redrawPath(dir), {force: true});
+        await saveDeckImages(await fetchDeck(id), dir);
+      } while (existsSync(redrawPath(dir)));
+    } finally {
+      // Only clear the mark if it's still ours.
+      if (drawingPid(dir) === process.pid || !drawingPid(dir)) rmSync(drawingPath(dir), {force: true});
+    }
+    // A sync that asked for a redraw just as this draw finished.
+    if (!existsSync(redrawPath(dir)) || drawingPid(dir)) return;
+    writeFileSync(drawingPath(dir), mark(process.pid));
   }
 }
 
-// Blocks until the draw for dir is done. Returns its error, if it failed.
-export async function waitForDrawing(dir: string, timeoutMs: number): Promise<string | undefined> {
+export type DrawWait = {status: "done"} | {status: "failed" | "drawing"; message: string};
+
+// Waits until the draw for dir is done, or the time is up.
+export async function waitForDrawing(dir: string, timeoutMs: number): Promise<DrawWait> {
   const deadline = Date.now() + timeoutMs;
   while (drawingPid(dir)) {
-    if (Date.now() > deadline) throw new Error(`the slides are still being drawn after ${Math.round(timeoutMs / 1000)}s`);
+    if (Date.now() > deadline) return {status: "drawing", message: `the slides are still being drawn after ${Math.round(timeoutMs / 1000)}s`};
     await new Promise((r) => setTimeout(r, 200));
   }
-  const e = existsSync(drawErrorPath(dir)) ? readFileSync(drawErrorPath(dir), "utf8").trim() : "";
-  return e || undefined;
+  const e = existsSync(drawErrorPath(dir)) ? readFileSync(drawErrorPath(dir), "utf8").trim().replace(/^goog: /, "") : "";
+  if (e) return {status: "failed", message: `drawing the slides failed: ${e}`};
+  // A finished draw removes its mark; one left behind was killed partway.
+  if (existsSync(drawingPath(dir))) return {status: "failed", message: "the draw was stopped before it finished, so some pictures may be out of date"};
+  return {status: "done"};
 }

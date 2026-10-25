@@ -18,6 +18,9 @@ model.ts is the shape they share.
 Slides takes the same path through backend.ts, which sync and watch call for
 both kinds: slides-format.ts → slides-read.ts → slides-plan.ts → pushDeck in
 slides.ts. Shape and cell text reuses the doc format's paragraph parser.
+Slide pictures are drawn after the sync by a detached `goog draw`
+(`drawInBackground` in slides.ts, one at a time per deck, tracked by
+`.drawing`), and `goog pics` waits for it.
 
 ## Invariants
 
@@ -91,6 +94,11 @@ Observed live; the code depends on each:
 - `updateSlidesPosition`'s insertionIndex counts positions before the move.
 - `updatePageElementAltText` on a group fails the whole batch ("operation is
   not allowed on group"), so the planner warns instead of sending it.
+- The thumbnail API allows about 60 calls a minute per user. Drive's PDF
+  export draws a whole deck in one call (about 12s for 88 slides), so from
+  `PDF_FROM` (10) stale slides `drawFromPdf` draws them with mutool instead.
+  The page-count check falls back to thumbnails if the export ever leaves out
+  skipped slides.
 - Image and thumbnail contentUrls are pre-signed: fetched without the token
   they come back several times faster.
 - The imported token has no presentations scope; its drive scope covers the

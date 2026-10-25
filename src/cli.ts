@@ -61,6 +61,7 @@ One-shot
   goog diff <file>              what a push would change in the doc, as a unified diff
   goog cat <doc>                print the doc as .goog without writing a file
   goog pics <file>              a deck's slides as pictures, once they're drawn
+      --timeout SECONDS         default 300
   goog check <file>             parse the file and report format errors
 
 Drive
@@ -103,7 +104,9 @@ Classroom
 
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
-ls, new, stop, skill, classroom, transcript, edit (one event per line), log, and errors ({"ok":false,"error":…}).
+pics, ls, new, stop, skill, classroom, transcript, edit (one event per line), log,
+and errors ({"ok":false,"error":…}). A deck's pull and push say "drawing":true
+while the slide pictures are drawn; goog pics --json lists them once they're done.
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
 
 Conflicts: when the doc and the file changed the same lines, the file gets
@@ -503,9 +506,13 @@ async function cmdPics(arg: string | undefined, timeoutS: number, asJson: boolea
   const file = need(arg, "goog pics <file>");
   if (!existsSync(file)) throw new Error(`${file} doesn't exist`);
   const dir = imagesDir(file);
-  const err = await waitForDrawing(dir, timeoutS * 1000);
-  if (err) throw new Error(`drawing the slides failed: ${err.replace(/^goog: /, "")}`);
-  if (asJson) return json({ok: true, file, images: savedImages(file)});
+  const w = await waitForDrawing(dir, timeoutS * 1000);
+  if (w.status === "failed") throw new Error(w.message);
+  if (w.status === "drawing") {
+    process.exitCode = EXIT.timeout;
+    return asJson ? json({ok: false, file, status: "drawing", message: w.message}) : out(w.message);
+  }
+  if (asJson) return json({ok: true, file, status: "done", images: savedImages(file)});
   outImages(savedImages(file));
 }
 
@@ -805,9 +812,9 @@ export async function main(argv: string[]) {
       const file = flags.out ?? ref.file ?? `${ref.id}.goog`;
       const r = await pull(ref.id, file, {force: flags.force, kind: ref.kind});
       if (asJson) return json({ok: true, ...r, file: resolve(file)});
-      out(`${r.replaced ? "replaced" : "pulled into"} ${file}${r.slides ? " (a Slides deck: goog help slides has the format)" : ""}`);
+      out(`${r.replaced ? "replaced" : "pulled into"} ${file}${r.drawing ? " (a Slides deck: goog help slides has the format)" : ""}`);
       if (r.drawing) out(DRAWING_NOTE(file));
-      else outImages([...(r.slides ?? []), ...r.images]);
+      else outImages(r.images);
       return outContents(file);
     }
     case "push": {
@@ -844,7 +851,7 @@ export async function main(argv: string[]) {
       }
       out(`pushed ${r.requests} edit(s)${notes.length ? `; ${notes.join("; ")}` : ""}`);
       if (r.savedDuring) out(again);
-      if (drawingPid(imagesDir(file))) out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
+      if (r.drawing) out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
       return;
     }
     case "diff": {
