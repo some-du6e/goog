@@ -16,6 +16,7 @@ test("parseWorkRef: Classroom links and courseId/workId", () => {
 test("parseCourseRef: a class's link", () => {
   assert.equal(parseCourseRef("https://classroom.google.com/u/0/c/NzkzMzQ3NjY4NTAy"), "793347668502");
   assert.equal(parseCourseRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/a/ODgzMDg4ODUwMzE3/details"), null);
+  assert.equal(parseCourseRef(" classroom.google.com/w/NzkzMzQ3NjY4NTAy/t/all"), "793347668502");
   assert.equal(parseCourseRef("Science"), null);
 });
 
@@ -53,6 +54,8 @@ test("editable: your one Doc or Slides copy, else a teacher's file shared to edi
   assert.throws(() => editable(work({})), /^Error: "Lab" has no Doc or Slides of yours to edit$/);
   const photo: Attachment = {title: "photo.jpg", url: "https://drive.google.com/file/d/y/view", kind: "file", readable: false};
   assert.equal(editable(work({yours: [photo], materials: [doc("shared", {share: "edit"})]})).title, "shared");
+  const sheet: Attachment = {title: "my sheet", url: "https://docs.google.com/spreadsheets/d/z/edit", kind: "sheet", readable: false};
+  assert.throws(() => editable(work({yours: [sheet], materials: [doc("shared", {share: "edit"})]})), /no Doc or Slides of yours/);
 });
 
 test("progress: words a copy adds to its template, tags and header aside", () => {
@@ -76,6 +79,6 @@ test("progress sees images and ticks, not just words", () => {
 test("videosIn: links and embeds, once each", () => {
   const text = `<a href="https://www.youtube.com/watch?v=j8YfUEzBQ20&t=3">video</a> <a href="https://youtu.be/j8YfUEzBQ20">again</a>\n<video id="v" youtube="abcdefghijk">`;
   assert.deepEqual(videosIn(text), ["https://youtu.be/j8YfUEzBQ20", "https://youtu.be/abcdefghijk"]);
-  const more = `<a href="https://www.youtube.com/watch?feature=shared&amp;v=AAAAAAAAAAA">a</a> youtube.com/shorts/BBBBBBBBBBB https://www.youtube-nocookie.com/embed/CCCCCCCCCCC youtube.com/live/DDDDDDDDDDD`;
-  assert.deepEqual(videosIn(more), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD"].map((id) => `https://youtu.be/${id}`));
+  const more = `<a href="https://www.youtube.com/watch?feature=shared&amp;v=AAAAAAAAAAA">a</a> youtube.com/shorts/BBBBBBBBBBB https://www.youtube-nocookie.com/embed/CCCCCCCCCCC youtube.com/live/DDDDDDDDDDD https://www.YouTube.com/watch?v=EEEEEEEEEEE https://www.youtube.com/embed/videoseries?list=PLx youtube.com/@channel`;
+  assert.deepEqual(videosIn(more), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD", "EEEEEEEEEEE"].map((id) => `https://youtu.be/${id}`));
 });

@@ -6,6 +6,7 @@
 // coursework.me scopes.
 
 import {backends} from "./backend.ts";
+import {parseVideo} from "./youtube.ts";
 import {DRIVE, api} from "./google.ts";
 
 export const CLASSROOM = "https://classroom.googleapis.com/v1";
@@ -64,9 +65,11 @@ export function isTodo(w: Work, now = Date.now()): boolean {
 
 const lower = (s: string) => s.toLowerCase().replace(/_/g, "-");
 
-const classroomPath = (arg: string) => /^(https?:\/\/)?classroom\.google\.com\//.test(arg.trim())
-  ? new URL(/^https?:/.test(arg) ? arg : `https://${arg}`).pathname.replace(/\/u\/\d+(?=\/)/, "")
-  : null;
+function classroomPath(arg: string): string | null {
+  const s = arg.trim();
+  if (!/^(https?:\/\/)?classroom\.google\.com\//i.test(s)) return null;
+  return new URL(/^https?:/i.test(s) ? s : `https://${s}`).pathname.replace(/\/u\/\d+(?=\/)/, "");
+}
 const unBase64 = (s: string) => (/^\d+$/.test(s) ? s : Buffer.from(s, "base64url").toString("utf8"));
 
 // classroom.google.com/c/<base64 course id>/a/<base64 work id>/details, or
@@ -84,14 +87,17 @@ export function parseWorkRef(arg: string): {courseId: string; id: string} | null
   return {courseId, id};
 }
 
-// A class's link, classroom.google.com/c/<base64 course id>: its id.
+// A class's link: its stream (/c/<base64 course id>), Classwork (/w/<id>/t/all)
+// or People (/r/<id>/…) page. Its id.
 export function parseCourseRef(arg: string): string | null {
-  const m = /^\/c\/([\w-]+)\/?$/.exec(classroomPath(arg) ?? "");
+  const path = classroomPath(arg) ?? "";
+  const m = /^\/c\/([\w-]+)\/?$/.exec(path) ?? /^\/[wr]\/([\w-]+)(?:\/|$)/.exec(path);
   const id = m ? unBase64(m[1]) : "";
   return /^\d+$/.test(id) ? id : null;
 }
 
 const KIND: Record<string, string> = {document: "doc", presentation: "slides", spreadsheets: "sheet", forms: "form", drawings: "drawing"};
+const GOOGLE = new Set(Object.values(KIND));
 
 function attachment(m: any): Attachment | null {
   const f = m.driveFile?.driveFile ?? m.driveFile;
@@ -215,8 +221,10 @@ export function editable(w: Work): Attachment {
   if (mine.length === 1) return mine[0];
   const list = (as: Attachment[]) => as.map((a) => `\n  ${a.kind}  ${a.url}  ${a.title}`).join("");
   if (mine.length > 1) throw new Error(`"${w.title}" has ${mine.length} files of yours; pick one:${list(mine)}`);
+  // Only when nothing of yours is a Google file: a photo or PDF you attached
+  // is no copy to edit, but your own Sheet is.
   const theirs = w.materials.filter((a) => a.readable && a.share === "edit");
-  if (theirs.length === 1) return theirs[0];
+  if (theirs.length === 1 && !w.yours.some((a) => GOOGLE.has(a.kind))) return theirs[0];
   throw new Error(`"${w.title}" has no Doc or Slides of yours to edit${w.yours.length || w.materials.length ? `. Its files:${list([...w.yours, ...w.materials])}` : ""}`);
 }
 
@@ -264,8 +272,16 @@ function templateOf(w: Work, a: Attachment): Attachment | undefined {
 // YouTube videos a .goog text links to or embeds.
 export function videosIn(text: string): string[] {
   const ids = new Set<string>();
-  const re = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^"\s<>]*?(?:&amp;|&))?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/|youtube=")([\w-]{11})/g;
-  for (const m of text.matchAll(re)) ids.add(m[1]);
+  const links = /(?:[\w-]+\.)?(?:youtube(?:-nocookie)?\.com|youtu\.be)\/[^\s"<>]*|youtube="([\w-]{11})"/gi;
+  for (const m of text.matchAll(links)) {
+    if (m[1]) ids.add(m[1]);
+    else {
+      try {
+        const id = parseVideo(m[0].replace(/&amp;/g, "&"));
+        if (id) ids.add(id);
+      } catch {} // a channel, playlist or search page
+    }
+  }
   return [...ids].map((id) => `https://youtu.be/${id}`);
 }
 
@@ -285,9 +301,9 @@ export async function measure(ws: Work[], opts: {materials?: boolean; yours?: bo
       const found: {url: string; in: string}[] = [];
       // Videos attached to the assignment are already listed as the teacher's.
       const files = w.materials.filter((a) => a.readable);
-      const texts = await Promise.all(files.map(read));
+      const got = await Promise.all(files.map(read));
       files.forEach((a, i) => {
-        for (const url of texts[i]?.videos ?? []) if (!found.some((v) => v.url === url)) found.push({url, in: a.title});
+        for (const url of got[i]?.videos ?? []) if (!found.some((v) => v.url === url)) found.push({url, in: a.title});
       });
       w.videos = found;
     }));

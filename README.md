@@ -146,7 +146,7 @@ urgent first (due next, then missing, then undated): work you haven't turned in 
 later, or has no due date and was set this month. It says how much older
 unfinished work it left out. Each one shows your own copy
 of its files (the "make a copy for each student" kind). `--all` lists
-everything not turned in however old, `--done` adds finished work, a class name or id narrows it (`goog classroom science`), `--due 7`
+everything not turned in however old, `--done` adds finished work, a class name, id or link narrows it (`goog classroom science`), `--due 7`
 keeps work due in the next week (missing work included), and
 `--progress` reads each copy to say whether it's still blank or how many words
 you've added to the teacher's template.

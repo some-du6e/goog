@@ -35,10 +35,11 @@ export interface Transcript {
 export function parseVideo(arg: string): string | null {
   const s = arg.trim();
   if (/^[\w-]{11}$/.test(s)) return s;
-  if (!/^(https?:\/\/)?([\w-]+\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//.test(s)) return null;
+  if (!/^(https?:\/\/)?([\w-]+\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(s)) return null;
   const u = new URL(/^https?:/.test(s) ? s : `https://${s}`);
   const id = u.hostname.endsWith("youtu.be") ? u.pathname.slice(1).split("/")[0]
     : u.searchParams.get("v") ?? /^\/(?:embed|shorts|live|v)\/([\w-]{11})/.exec(u.pathname)?.[1];
+  if (id === "videoseries") throw new Error(`"${arg}" is a playlist, not a video`);
   if (!id || !/^[\w-]{11}$/.test(id)) throw new Error(`can't find a video id in "${arg}"`);
   return id;
 }
@@ -58,14 +59,17 @@ interface Track {
 }
 
 // The uploader's captions in the language asked for, else automatic ones in
-// it; with no language, the uploader's in the spoken language (the one the
-// automatic captions are in), else the automatic, else the first.
-export function pickTrack(tracks: Track[], lang?: string): Track | undefined {
+// it; with no language, the uploader's in the spoken language, else the
+// automatic, else the first. The spoken language is the audio's when YouTube
+// says (a video dubbed into other languages has automatic captions in each),
+// else the automatic captions'.
+export function pickTrack(tracks: Track[], lang?: string, audio?: string): Track | undefined {
   const human = (t: Track) => t.kind !== "asr";
   const is = (t: Track, l: string) => t.languageCode === l || t.languageCode.startsWith(`${l}-`);
   if (lang) return tracks.find((t) => is(t, lang) && human(t)) ?? tracks.find((t) => is(t, lang));
-  const spoken = tracks.find((t) => !human(t))?.languageCode;
-  return (spoken ? tracks.find((t) => human(t) && is(t, spoken.split("-")[0])) : undefined) ?? tracks.find((t) => !human(t)) ?? tracks[0];
+  const spoken = (audio ?? tracks.find((t) => !human(t))?.languageCode)?.split("-")[0];
+  const asr = (spoken ? tracks.find((t) => !human(t) && is(t, spoken)) : undefined) ?? tracks.find((t) => !human(t));
+  return (spoken ? tracks.find((t) => human(t) && is(t, spoken)) : undefined) ?? asr ?? tracks[0];
 }
 
 // YouTube's json3 caption format: events with segments, each offset from its
@@ -86,14 +90,14 @@ export function json3Words(j: any): Word[] {
 
 // Captions saved as Windows-1252 and read back as Mac Roman turn ’ “ ” …
 // into í ì î Ö ("Iím", "andÖ"), and – — into ñ ó. English has no í, so in
-// an English track that shows the pattern a few times, put them back. ñ and ó
-// only as words of their own, since names like Peña have them too.
+// an English track that shows the pattern a few times, put them back. A real
+// ñ or ó in such a track would have come out as Ò or Û, so every one is a dash.
 export function fixQuotes(words: Word[], lang: string): Word[] {
   if (!lang.startsWith("en")) return words;
   const odd = words.filter((w) => /\wí\w|Ö$/.test(w.word)).length;
   if (odd < 3) return words;
   const map: Record<string, string> = {"í": "’", "ì": "“", "î": "”", "Ö": "…", "ñ": "–", "ó": "—"};
-  return words.map((w) => ({...w, word: /^[ñó]$/.test(w.word) ? map[w.word] : w.word.replace(/[íìîÖ]/g, (c) => map[c])}));
+  return words.map((w) => ({...w, word: w.word.replace(/[íìîÖñó]/g, (c) => map[c])}));
 }
 
 async function fromYouTube(id: string, lang?: string): Promise<Transcript | {error: string}> {
@@ -106,10 +110,12 @@ async function fromYouTube(id: string, lang?: string): Promise<Transcript | {err
   const p: any = await r.json();
   const status = p.playabilityStatus?.status;
   if (status !== "OK") return {error: p.playabilityStatus?.reason ?? `YouTube says ${status ?? "nothing"}`};
-  const tracks: Track[] = p.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+  const list = p.captions?.playerCaptionsTracklistRenderer;
+  const tracks: Track[] = list?.captionTracks ?? [];
+  const audio: string | undefined = list?.audioTracks?.[list?.defaultAudioTrackIndex ?? 0]?.audioTrackId?.split(".")[0];
   const languages = [...new Set(tracks.map((t) => t.languageCode))];
   if (!tracks.length) return {error: "it has no captions"};
-  const t = pickTrack(tracks, lang);
+  const t = pickTrack(tracks, lang, audio);
   if (!t) return {error: `it has no captions in "${lang}"; it has ${languages.join(", ")}`};
   const c = await get(`${t.baseUrl}&fmt=json3`, {headers: {"User-Agent": IOS_AGENT}});
   const body = c.ok ? await c.text() : "";

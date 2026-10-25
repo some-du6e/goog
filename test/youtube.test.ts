@@ -25,6 +25,8 @@ test("pickTrack: the uploader's captions in the spoken language, else automatic"
   assert.equal(pickTrack(tracks, "de")?.baseUrl, "de-DE");
   assert.equal(pickTrack([t("es", "asr")])?.baseUrl, "esasr");
   assert.equal(pickTrack([t("ko")], "en"), undefined);
+  const dubbed = [t("ar", "asr"), t("en-US", "asr"), t("es", "asr")]; // automatic captions for each dub
+  assert.equal(pickTrack(dubbed, undefined, "es-US")?.baseUrl, "esasr");
 });
 
 test("json3Words: per-word offsets, and caption lines split into words", () => {
@@ -44,7 +46,7 @@ test("fixQuotes: mis-decoded smart quotes in English captions, and only there", 
   const bad = ["Iím", "doing", "weíre", "andÖ", "Itís", "ìhelloî"].map(w);
   assert.deepEqual(fixQuotes(bad, "en").map((x) => x.word), ["I’m", "doing", "we’re", "and…", "It’s", "“hello”"]);
   assert.deepEqual(fixQuotes(bad, "es").map((x) => x.word), bad.map((x) => x.word));
-  assert.deepEqual(fixQuotes([...bad, w("Peña"), w("ñ"), w("ó")], "en").slice(-3).map((x) => x.word), ["Peña", "–", "—"]);
+  assert.deepEqual(fixQuotes([...bad, w("itóthe"), w("ñ")], "en").slice(-2).map((x) => x.word), ["it—the", "–"]);
   const fine = ["María", "said", "hi"].map(w);
   assert.deepEqual(fixQuotes(fine, "en"), fine);
 });

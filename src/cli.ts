@@ -676,17 +676,22 @@ async function cmdTranscript(arg: string, opts: {lang?: string; from?: string; t
     videos = [{id}];
   }
   // One video without captions shouldn't cost the others.
-  const got = await Promise.allSettled(videos.map((v) => transcript(v.id, {lang})));
-  const failed = got.flatMap((r) => (r.status === "rejected" ? [String(r.reason?.message ?? r.reason)] : []));
+  const got = (await Promise.allSettled(videos.map((v) => transcript(v.id, {lang})))).map((r, i) => ({
+    ...videos[i],
+    from: videos[i].title,
+    t: r.status === "fulfilled" ? {...r.value, words: r.value.words.filter((w) => w.start >= from && w.start < to)} : undefined,
+    error: r.status === "rejected" ? String(r.reason?.message ?? r.reason) : undefined,
+  }));
+  const failed = got.flatMap((g) => (g.error ? [g.error] : []));
   if (failed.length === got.length) throw new Error(failed.join("\n"));
+  if (asJson) {
+    return json(got.map((g) => (g.t ? {...g.t, ...(g.from ? {from: g.from} : {}), text: g.t.words.map((w) => w.word).join(" ")}
+      : {id: g.id, url: `https://youtu.be/${g.id}`, ...(g.from ? {from: g.from} : {}), error: g.error})));
+  }
   for (const f of failed) process.stderr.write(`goog: ${f}\n`);
-  videos = videos.filter((_, i) => got[i].status === "fulfilled");
-  const ts = got.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
-    .map((t) => ({...t, words: t.words.filter((w) => w.start >= from && w.start < to)}));
-  if (asJson) return json(ts.map((t, i) => ({...t, ...(videos[i].title ? {from: videos[i].title} : {}), text: t.words.map((w) => w.word).join(" ")})));
-  ts.forEach((t, i) => {
+  got.flatMap((g) => (g.t ? [{t: g.t, from: g.from}] : [])).forEach(({t, from: linked}, i) => {
     if (i) out("");
-    const title = [t.title ? `"${t.title}"` : "", videos[i].title].filter(Boolean).join(", ");
+    const title = [t.title ? `"${t.title}"` : "", linked].filter(Boolean).join(", ");
     const kind = t.auto ? "automatic captions, so expect misheard words" : "the uploader's captions";
     const others = t.languages && t.languages.length > 1 ? `; also ${t.languages.filter((l) => l !== t.lang).join(", ")} (--lang)` : "";
     const part = from || to < Infinity ? `, ${clock(from)}–${to < Infinity ? clock(to) : "end"} of it` : "";
