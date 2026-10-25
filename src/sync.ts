@@ -394,7 +394,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   if (act.action === "none") {
     // The file can't say everything (a background set in the browser), so
     // the deck may have changed even though the text didn't.
-    if (remote.rev !== base?.rev) redraw();
+    if (!dryRun && remote.rev !== base?.rev) redraw();
     save(theirs, remote.rev);
     return out;
   }

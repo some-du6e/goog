@@ -3,7 +3,7 @@
 // shell script on PATH.
 
 import assert from "node:assert/strict";
-import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
+import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import {spawnSync} from "node:child_process";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -26,7 +26,7 @@ esac
 chmodSync(join(bin, "mutool"), 0o755);
 process.env.PATH = `${bin}:${process.env.PATH}`;
 
-const {saveDeckImages, drawingPid, drawInBackground, drawNow, waitForDrawing} = await import("../src/slides.ts");
+const {claim, saveDeckImages, drawingPid, drawInBackground, drawNow, waitForDrawing} = await import("../src/slides.ts");
 const {fromApi} = await import("../src/slides-read.ts");
 const {startedAt} = await import("../src/proc.ts");
 
@@ -203,4 +203,15 @@ test("pictures: a draw goes round again for a sync made while it ran, then clear
   assert.ok(!existsSync(join(dir, ".drawing")));
   assert.ok(!existsSync(join(dir, ".redraw")));
   assert.deepEqual(await waitForDrawing(dir, 1000), {status: "done"});
+});
+
+test("pictures: a mark left by a killed draw is taken over, a live one isn't", () => {
+  const dir = fresh();
+  const live = `${process.pid} ${startedAt(process.pid) ?? ""}`;
+  writeFileSync(join(dir, ".drawing"), `${spawnSync("true").pid} `);
+  assert.ok(claim(dir, process.pid));
+  assert.equal(readFileSync(join(dir, ".drawing"), "utf8"), live);
+  assert.ok(!claim(dir, process.pid));
+  assert.equal(readFileSync(join(dir, ".drawing"), "utf8"), live);
+  assert.deepEqual(readdirSync(dir), [".drawing"]);
 });

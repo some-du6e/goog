@@ -13,7 +13,8 @@ export function isAlive(pid: number | undefined): boolean {
 }
 
 // When a process started (clock ticks since boot, from /proc/<pid>/stat; or
-// ps's start time where there's no /proc, as on macOS), or undefined if
+// ps's start time where there's no /proc, as on macOS, in one locale and
+// zone whoever asks), or undefined if
 // neither says. A pid plus its start time names one process, even after the
 // pid is reused.
 export function startedAt(pid: number): string | undefined {
@@ -24,7 +25,7 @@ export function startedAt(pid: number): string | undefined {
   } catch {}
   if (existsSync("/proc/self")) return undefined; // /proc is there, so the pid isn't
   try {
-    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]}).trim().replace(/\s+/g, "_") || undefined;
+    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: {...process.env, LC_ALL: "C", TZ: "UTC"}}).trim().replace(/\s+/g, "_") || undefined;
   } catch {
     return undefined;
   }

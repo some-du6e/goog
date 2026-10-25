@@ -3,7 +3,7 @@
 
 import {execFile, spawn} from "node:child_process";
 import {createHash} from "node:crypto";
-import {closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
+import {closeSync, copyFileSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync} from "node:fs";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
@@ -224,11 +224,24 @@ export function drawingPid(dir: string): number | undefined {
 
 // Takes the mark for pid, unless a live draw has it. Creating the file is
 // atomic, so two syncs at once can't both start a draw.
-function claim(dir: string, pid: number): boolean {
+export function claim(dir: string, pid: number): boolean {
   try {
     const was = readFileSync(drawingPath(dir), "utf8");
     if (drawingPid(dir)) return false;
-    if (readFileSync(drawingPath(dir), "utf8") === was) rmSync(drawingPath(dir)); // left by a draw that was killed
+    // Left by a draw that was killed. Moving it aside is atomic, so of two
+    // syncs clearing it only one gets it; one that got a live mark instead
+    // puts it back.
+    const aside = `${drawingPath(dir)}.${process.pid}`;
+    renameSync(drawingPath(dir), aside);
+    const got = readFileSync(aside, "utf8");
+    if (got !== was) {
+      try {
+        linkSync(aside, drawingPath(dir));
+      } catch {}
+      rmSync(aside, {force: true});
+      return false;
+    }
+    rmSync(aside, {force: true});
   } catch {}
   try {
     writeFileSync(drawingPath(dir), mark(pid), {flag: "wx"});
