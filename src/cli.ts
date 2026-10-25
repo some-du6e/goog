@@ -55,7 +55,8 @@ One-shot
   goog pull <doc> [-o FILE]     download the doc into FILE. Refuses to drop unpushed
                                 changes, or a file goog never synced that differs
                                 from the doc, unless --force
-  goog push <file> [--dry-run]  send the file's changes to the doc once, merging with
+  goog push <file> [--dry-run] [--type [--wpm N]]
+                                send the file's changes to the doc once, merging with
                                 edits made in the doc since the last sync
       --type                    type new text in, a few words a write at about 45
                                 words a minute, so version history shows it typed

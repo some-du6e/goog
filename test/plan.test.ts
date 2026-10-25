@@ -148,6 +148,66 @@ test("flubs: net text equals the original, with a plausible deletion ratio", () 
   }
 });
 
+test("a stale-guard 400 retries without the guard only when the doc's rev is unchanged", async () => {
+  // Docs forgot the rev: io.batch rejects once with "required revision" even
+  // though the sim's rev never moved. The retry (unguarded) must land.
+  const sim = SimDoc.from("Q: life?\n");
+  const x = io(sim);
+  let dropped = false;
+  const flaky: DocsIO = {
+    get: x.get,
+    batch: async (id, b) => {
+      if (!dropped && b.writeControl?.requiredRevisionId === `r${sim.rev}` && b.requests.some((r: any) => r.insertText)) {
+        dropped = true;
+        throw new ApiError(400, "The required revision ID does not match the latest revision.");
+      }
+      return x.batch(id, b);
+    },
+  };
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  const r = await pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {io: flaky, typing: TYPING});
+  assert.equal(body(serialize(fromApi(sim.toApi()).doc)), `Q: life?\n${answer}`);
+  assert.ok(dropped, "the stale-guard path never fired");
+});
+
+test("a real edit mid-typing stops the push instead of typing into it", async () => {
+  // io.batch rejects once with "required revision" AND the sim's rev has
+  // advanced (someone else wrote). The retry must rethrow, not type on.
+  const sim = SimDoc.from("Q: life?\n");
+  const x = io(sim);
+  let fired = false;
+  const hostile: DocsIO = {
+    get: x.get,
+    batch: async (id, b) => {
+      if (!fired && b.requests.some((r: any) => r.insertText && r.insertText.text.length > 3)) {
+        fired = true;
+        sim.rev++; // the other writer's edit moved the rev
+        throw new ApiError(400, "The required revision ID does not match the latest revision.");
+      }
+      return x.batch(id, b);
+    },
+  };
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  await assert.rejects(
+    pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {io: hostile, typing: TYPING}),
+    /required revision/i,
+  );
+  assert.ok(fired, "the edit never landed");
+});
+
+test("typed progress counts net characters, so done === total at paragraph end", async () => {
+  const sim = SimDoc.from("Q: life?\n");
+  const answer = "The answer to life, the universe and everything is forty-two.";
+  const seen: Array<[number, number]> = [];
+  await pushDoc("sim", parse(HEAD + `Q: life?\n${answer}`), {
+    io: io(sim),
+    typing: {wpm: 45, sleep: async () => {}, onChunk: (d, t) => seen.push([d, t])},
+  });
+  // done never overshoots total, and the last call lands exactly on it.
+  for (const [d, t] of seen) assert.ok(d <= t, `done ${d} > total ${t}`);
+  assert.deepEqual(seen.at(-1), [answer.length, answer.length]);
+});
+
 test("small edits send few requests, in one pass", async () => {
   const sim = SimDoc.from("<h1>Title</h1>\nSome <b>bold</b> words here.\nlast");
   const r = await push(sim, "<h1>Title</h1>\nSome <b>very bold</b> words here.\nlast");

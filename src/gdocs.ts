@@ -169,21 +169,27 @@ export async function pushDoc(
 // typing.ts), each its own write at the index the one before it ended. The
 // requests around it go as they are, so every later request finds its index
 // where the batch expected it. Each write is guarded by the revision the one
-// before it made, so an edit made in the doc meanwhile stops the push. A
-// guard that Docs forgot the revision of (a server tick; observed live) is
-// retried once without it.
+// before it made, so an edit made in the doc meanwhile stops the push.
+//
+// A 400 "required revision" can mean two things: Docs forgot the revision (a
+// server tick; observed live — the doc's rev is still ours), or someone else
+// edited (the rev has moved on). Only the first is retried, once, without the
+// guard; the second rethrows so the push stops instead of typing into the
+// other edit.
 async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | undefined, t: Typing) {
   const sleep = t.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const replies: any[] = [];
   let guard = rev;
-  const send = async (reqs: any[]) => {
+  const send = async (reqs: any[]): Promise<any[]> => {
     try {
       const res = await io.batch(id, {requests: reqs, writeControl: guard ? {requiredRevisionId: guard} : undefined});
       guard = res.writeControl?.requiredRevisionId;
       return res.replies ?? reqs.map(() => ({}));
     } catch (e) {
       if (!guard || !(e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message))) throw e;
-      guard = await fetchRev(id);
+      const now = toRemote(await io.get(id)).doc.rev;
+      if (now && now !== guard) throw e; // someone else edited; don't type into it
+      guard = undefined; // Docs forgot the rev; retry once without it
       return send(reqs);
     }
   };
@@ -198,6 +204,7 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
     if (pending.length) replies.push(...(await send(pending)));
     pending = [];
     const {location, text} = r.insertText;
+    const {index: _i, ...ctx} = location; // segmentId/tabId, for the backspaces
     let index = location.index;
     for (const s of flubs(chunks(text, t), t)) {
       await sleep(s.wait);
@@ -206,8 +213,9 @@ async function typeBatch(io: DocsIO, id: string, requests: any[], rev: string | 
         index += s.insert.length;
         done += s.insert.length;
       } else {
-        await send([{deleteContentRange: {range: {startIndex: index - s.del, endIndex: index}}}]);
+        await send([{deleteContentRange: {range: {startIndex: index - s.del, endIndex: index, ...ctx}}}]);
         index -= s.del;
+        done -= s.del;
       }
       t.onChunk?.(done, total);
     }
