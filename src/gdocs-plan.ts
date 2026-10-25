@@ -53,6 +53,17 @@ export type PlanRemote = Remote & {api?: any};
 
 const EMPTY: Para = {type: "para", style: "p", runs: []};
 
+// Text long enough that goog --type types it rather than inserting it whole.
+export const TYPE_MIN = 10;
+export const typeable = (r: Req) => typeof r.insertText?.text === "string" && !r.insertText.text.includes("\n") && r.insertText.text.length >= TYPE_MIN && /\S/.test(r.insertText.text);
+
+// One paragraph's edits, with what they create, so typing mode can hold them back.
+interface Slice {
+  reqs: Req[];
+  created: Created[];
+  chips: Atom[];
+}
+
 // ---------- target normalization ----------
 
 // Docs keeps a paragraph before a leading table, between tables, and at the
@@ -469,6 +480,8 @@ class Planner {
   defaultFont?: string;
   defaultSize?: number; // set in footnotes, where Docs' default is 10pt
   inTable = 0;
+  typing = false;
+  typed: Slice[] = []; // paragraph edits that add text, in the order planned
 
   constructor(shared: Shared) {
     this.remoteKeys = shared.remoteKeys;
@@ -611,12 +624,19 @@ class Planner {
     if (!news.length) return;
     const b = news[0];
     if (b.type === "table") return this.insertTable(prev, next, b, news.length === 1);
+    // A typist presses Enter where they're about to type, not ahead of time.
+    this.slice(() => this.insertParas(prev, next, news), true);
+  }
+
+  insertParas(prev: IBlock, next: IBlock, news: Block[]) {
     const stop = news.findIndex((x) => x.type !== "para");
     // A paragraph that only holds objects staying elsewhere would come out empty.
     const paras = ((stop < 0 ? news : news.slice(0, stop)) as Para[]).filter(
       (p) => !p.runs.length || p.runs.some((r) => !("atom" in r) || !this.stuck(r.atom)),
     );
     if (!paras.length) return;
+    // A typist makes one paragraph at a time; the next pass makes the next.
+    if (this.typing) paras.length = 1;
     // New paragraphs copy the one they're split from, bullet included, so
     // split the neighbour that's most like them. On a tie, split off the start
     // of the next one, which leaves the previous paragraph (and its id) alone.
@@ -793,7 +813,23 @@ class Planner {
     }
   }
 
+  // Runs `fn`, and in typing mode (see plan) records what it planned as one
+  // slice that a pass can hold back: always, or if it adds text to type.
+  slice(fn: () => void, always: boolean) {
+    const at = {out: this.out.length, created: this.created.length, chips: this.chips.length, typed: this.typed.length};
+    fn();
+    if (!this.typing) return;
+    const reqs = this.out.slice(at.out);
+    if (!reqs.length || (!always && !reqs.some(typeable))) return;
+    this.typed.length = at.typed; // the slices inside it go as part of it
+    this.typed.push({reqs, created: this.created.slice(at.created), chips: this.chips.slice(at.chips)});
+  }
+
   para(old: IPara, nb: Para) {
+    this.slice(() => this.paraEdits(old, nb), false);
+  }
+
+  paraEdits(old: IPara, nb: Para) {
     const ob = old.block;
     const base = old.start;
     type Unit = {tok: string; len: number; run: Run};
@@ -1482,7 +1518,13 @@ export function ticksDiffer(have: Doc, want: Doc): boolean {
 
 export const CHECKS_WARNING = "ticking or unticking checklist items can't be done through the Docs API; tick them in Docs";
 
-export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
+// With `typing`, a pass makes at most one new paragraph per run of them, and of
+// the paragraph edits that add text it keeps only the first in the doc. The
+// rest wait for later passes, so pushDoc can type text in the order a person
+// would. Leaving a paragraph's edits out is safe: the planner works from the
+// end of each segment to the start, so nothing planned after them depends on
+// them.
+export function plan(remote: PlanRemote, target: Doc | Block[], opts: {typing?: boolean} = {}): Plan {
   // A bare Block[] is just the body: segments and tabs are left alone.
   const doc: Doc & {bodyOnly?: boolean} = Array.isArray(target) ? {kind: "doc", id: remote.doc.id, blocks: target, bodyOnly: true} : target;
   const warnings: string[] = [];
@@ -1503,6 +1545,8 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
     (holder.segments ??= []).push({kind: "footnote", id, blocks: [{type: "para", style: "p", runs: text ? [{text, style: {}}] : []}]});
   };
   const shared: Shared = {warnings, created, chips, objects: remoteObjects(remote.api), keep, remoteKeys, dropdowns: remoteDropdowns(remote.api), addFootnote};
+  const typed: Slice[] = [];
+  let first: Slice | undefined;
   const run = (fn: (p: Planner, u: Unit, target: Block[]) => void): Req[] => {
     const all: Req[] = [];
     for (const u of work) {
@@ -1510,12 +1554,25 @@ export function plan(remote: PlanRemote, target: Doc | Block[]): Plan {
       p.ctx = u.ctx;
       p.defaultFont = u.defaults.NORMAL_TEXT?.font;
       if (u.footnote) p.defaultSize = FOOTNOTE_SIZE;
+      p.typing = !!opts.typing;
       fn(p, u, dropDefaults(u.target, u.defaults));
       all.push(...p.out);
+      typed.push(...p.typed);
+      // Within a segment, the last planned is the first in the doc.
+      first ??= p.typed.at(-1);
     }
     return all;
   };
-  const content = [...tabReqs, ...run((p, u, t) => p.segment(u.seg, t))];
+  let content = [...tabReqs, ...run((p, u, t) => p.segment(u.seg, t))];
+  if (typed.length > 1) {
+    const held = typed.filter((x) => x !== first);
+    const reqs = new Set(held.flatMap((x) => x.reqs));
+    const made = new Set(held.flatMap((x) => x.created));
+    const sent = new Set(held.flatMap((x) => x.chips));
+    content = content.filter((r) => !reqs.has(r));
+    created.splice(0, created.length, ...created.filter((c) => !made.has(c)));
+    chips.splice(0, chips.length, ...chips.filter((c) => !sent.has(c)));
+  }
   if (content.length) return {pass: "content", requests: content, warnings, created, chips};
   created.length = 0;
   const lists = run((p, u, t) => p.lists(u.seg, t));

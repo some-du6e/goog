@@ -18,6 +18,17 @@ description: Read and edit Google Docs and Slides from the shell with goog, as a
    matches the file, and that's the check. Any `warning:` lines name edits
    Docs couldn't take, and the file now shows what the doc really has.
 
+**Typing it in.** When the user wants text typed (autotype, "type it in",
+version history that shows it written), push with
+`goog push <file> --type` instead. New text goes in a few words a write at
+about 45 words a minute, top to bottom, through the API: no browser. It's
+slow (a 100-word answer is ~2.5 minutes), so always run it in the background
+and wait for `pushed`. Leave a blank line between paragraphs — one per line
+without them looks like a wall of text in the doc. If it's stopped partway,
+the same command picks up where it left off. Small fixes (under 10
+characters) still go in at once. `--wpm N` changes the speed. It won't run
+while `goog edit` watches the file.
+
 ## Format
 
 The file mirrors the doc: whatever you leave as pulled stays exactly as it is,

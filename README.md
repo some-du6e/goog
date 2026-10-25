@@ -12,6 +12,7 @@ goog wait DOC_ID.goog      # after a save: wait for the push; exit 1 on error, 2
 goog status                # every file goog knows about and whether it's synced
 goog stop                  # stop background syncs (each pushes its last save first)
 goog push DOC_ID.goog      # one-shot push, no watcher (--dry-run shows the diff)
+goog push DOC_ID.goog --type   # same, but new text is typed in at human speed
 goog diff DOC_ID.goog      # what a push would change in the doc
 goog help                  # everything else
 ```
@@ -30,6 +31,12 @@ goog help                  # everything else
   `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
 - `goog log <file>` shows what the watcher did: pushes, pulls, conflicts,
   retries.
+- `goog push <file> --type` types new text in through the API, a few
+  words a write at about 45 words a minute (`--wpm N`), one paragraph at a
+  time from the top. The doc's version history then shows it being written,
+  not pasted. Formatting is applied after a paragraph's words. Fixes under 10
+  characters go in at once. A push that's stopped partway carries on when it's
+  run again. Docs allows about 60 writes a minute, which sets the pace.
 
 - `goog skill install` gives Claude Code and Codex a skill with the
   pull/edit/push steps and the format, so they skip reading `goog help`

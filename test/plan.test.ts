@@ -9,6 +9,7 @@ import {ApiError} from "../src/google.ts";
 import type {Block} from "../src/model.ts";
 import {SCENARIOS} from "./plan-scenarios.ts";
 import {SimDoc} from "./sim.ts";
+import {MIN_GAP_MS, chunks} from "../src/typing.ts";
 
 const HEAD = "<!-- goog doc sim -->\n";
 const body = (s: string) => s.slice(s.indexOf("\n") + 1).trim();
@@ -40,9 +41,12 @@ function io(sim: SimDoc): DocsIO & {batches: any[][]} {
   };
 }
 
-async function push(sim: SimDoc, target: string) {
+// Typing without the waits.
+const TYPING = {wpm: 45, sleep: async () => {}};
+
+async function push(sim: SimDoc, target: string, opts: {typing?: boolean} = {}) {
   const x = io(sim);
-  const r = await pushDoc("sim", parse(HEAD + target), {io: x});
+  const r = await pushDoc("sim", parse(HEAD + target), {io: x, typing: opts.typing ? TYPING : undefined});
   return {...r, out: body(serialize(fromApi(sim.toApi()).doc)), batches: x.batches};
 }
 
@@ -50,9 +54,10 @@ const pulled = (sim: SimDoc) => body(serialize(fromApi(sim.toApi()).doc));
 
 // ---------- the live scenarios, against the simulator ----------
 
-for (const sc of SCENARIOS) {
+// Typed (goog push --type), every scenario must end the same way.
+for (const {sc, typing} of SCENARIOS.flatMap((sc) => [{sc, typing: false}, {sc, typing: true}])) {
   if (sc.setup || sc.between || sc.expectError) continue;
-  test(`sim: ${sc.name}`, async () => {
+  test(`sim${typing ? " typed" : ""}: ${sc.name}`, async () => {
     let sim: SimDoc;
     try {
       sim = SimDoc.from(sc.start);
@@ -62,7 +67,7 @@ for (const sc of SCENARIOS) {
     }
     assert.equal(canon(pulled(sim)), canon(sc.start), "sim built the start doc wrong");
     const target = typeof sc.edit === "string" ? sc.edit : sc.edit(pulled(sim));
-    const r = await push(sim, target);
+    const r = await push(sim, target, {typing});
     if (r.warnings.some((w) => /can't create <(hr|footnote)/.test(w))) return;
     assert.equal(canon(r.out), canon(typeof sc.expect === "function" ? sc.expect(pulled(sim)) : sc.expect ?? target));
     assert.ok(!r.warnings.some((w) => /stopped after|some changes can't be made/.test(w)), r.warnings.join("\n"));
@@ -80,6 +85,37 @@ test("untouched fixture docs (tabs, segments, lists, merged cells, chips) plan n
     assert.deepEqual(p.warnings, [], f);
   }
 });
+
+test("a typed push types answers top to bottom, a few words a write, then styles them", async () => {
+  const sim = SimDoc.from("Q1: What is a cell?\nQ2: Name an organelle.");
+  const a1 = "A cell is the basic unit of life. All living things are made of cells.";
+  const a2 = "The mitochondrion, which makes energy for the cell.";
+  const r = await push(sim, `Q1: What is a cell?\n${a1.replace("basic unit", "<b>basic unit</b>")}\nQ2: Name an organelle.\n${a2}`, {typing: true});
+  assert.equal(r.out, `Q1: What is a cell?\n${a1.replace("basic unit", "<b>basic unit</b>")}\nQ2: Name an organelle.\n${a2}`);
+  const inserts = r.batches.flat().filter((q) => q.insertText).map((q) => q.insertText.text);
+  // Enter, then the answer, for Q1 and then for Q2.
+  assert.equal(inserts.join(""), `\n${a1}\n${a2}`);
+  assert.ok(inserts.every((t) => t.split(" ").filter(Boolean).length <= 3), inserts.join("|"));
+  // Each piece of typing is a write of its own; the bold comes after the words.
+  const typed = r.batches.filter((b) => b.some((q) => q.insertText && q.insertText.text !== "\n"));
+  assert.ok(typed.every((b) => b.length === 1));
+  const bold = r.batches.findIndex((b) => b.some((q) => q.updateTextStyle?.textStyle?.bold));
+  assert.ok(bold > r.batches.findIndex((b) => b[0].insertText?.text.includes("cells.")));
+  // Short fixes aren't typed: they go in one write as usual.
+  const fix = await push(sim, `Q1: What is a cell?\n${a1.replace("basic unit", "<b>basic unit</b>").replace("life", "all life")}\nQ2: Name an organelle.\n${a2}`, {typing: true});
+  assert.equal(fix.batches.length, 1);
+});
+
+test("typing chunks cover the text, end at sentences, and keep to the write quota", () => {
+  const text = "  Plants make food. They use light, water and air!  Then they grow. ";
+  for (const seed of [0.01, 0.5, 0.99]) {
+    const c = chunks(text, {wpm: 300, random: () => seed});
+    assert.equal(c.map((x) => x.text).join(""), text);
+    assert.ok(c.every((x) => x.wait >= MIN_GAP_MS));
+    for (const x of c) assert.ok(!/[.!?]\s+\S/.test(x.text), x.text);
+  }
+});
+
 
 test("small edits send few requests, in one pass", async () => {
   const sim = SimDoc.from("<h1>Title</h1>\nSome <b>bold</b> words here.\nlast");

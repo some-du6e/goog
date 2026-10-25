@@ -186,6 +186,28 @@ test("pull won't drop unpushed edits to a synced file unless --force", async () 
   assert.equal(readFileSync(f, "utf8"), doc("one"));
 });
 
+test("a typed push stopped partway carries on next time instead of conflicting", async () => {
+  const f = fileIn("typed.goog");
+  const remote = fakeDoc(doc("Q1?", "Q2?"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+  const be = backends.doc as any;
+  const push = be.push;
+  // The first pass types answer one and half of answer two, then it's killed.
+  be.push = async (_id: string, _target: any, opts: any) => {
+    remote.text = doc("Q1?", "Answer one.", "Q2?", "Answer");
+    opts.onWrote({text: remote.text, rev: "r2", remote: null});
+    throw new Error("killed");
+  };
+  const typing = {wpm: 45, sleep: async () => {}};
+  await assert.rejects(S.push(f, {typing}), /killed/);
+  be.push = push;
+  const r = await S.push(f, {typing});
+  assert.equal(r.status, "pushed");
+  assert.equal(remote.text, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+  assert.equal(readFileSync(f, "utf8"), remote.text);
+});
+
 test("a save made while push reads the doc isn't overwritten", async () => {
   const f = fileIn("race-pull.goog");
   const remote = fakeDoc(doc("one", "two", "three"));

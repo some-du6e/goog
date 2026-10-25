@@ -4,11 +4,12 @@
 
 import {parseHeader, parse as parseDoc, serialize as serializeDoc} from "./format.ts";
 import {fetchDoc, fetchRev, markChecked, pushDoc, saveImages} from "./gdocs.ts";
-import {CHECKS_WARNING, plan as planDoc, ticksDiffer} from "./gdocs-plan.ts";
+import {CHECKS_WARNING, plan as planDoc, ticksDiffer, type PlanRemote} from "./gdocs-plan.ts";
 import {DRIVE, api} from "./google.ts";
 import {parse as parseDeck, serialize as serializeDeck} from "./slides-format.ts";
 import {plan as planDeck} from "./slides-plan.ts";
 import {fetchDeck, fetchDeckRev, pushDeck, saveDeckImages} from "./slides.ts";
+import type {Typing} from "./typing.ts";
 
 export type Kind = "doc" | "slides";
 
@@ -29,7 +30,8 @@ export interface Backend {
   parse(text: string): any; // throws FormatError
   serialize(target: any): string;
   plan(f: Fetched, target: any): {requests: unknown[]; warnings: string[]};
-  push(id: string, target: any, opts: {rev?: string; first: Fetched}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
+  // `typing` and `onWrote` (the doc after each pass's writes) are docs only.
+  push(id: string, target: any, opts: {rev?: string; first: Fetched; typing?: Typing; onWrote?: (f: Fetched) => void}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
   saveImages(f: Fetched, dir: string): Promise<{images: string[]; slides?: string[]}>;
 }
 
@@ -46,7 +48,8 @@ const docs: Backend = {
   serialize: serializeDoc,
   plan: (f, target) => planDoc(f.remote, target),
   async push(id, target, opts) {
-    const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote});
+    const onWrote = opts.onWrote && ((r: PlanRemote) => opts.onWrote!({text: serializeDoc(r.doc), rev: r.doc.rev, remote: r}));
+    const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote, typing: opts.typing, onWrote});
     // A new item the file ticks is created unticked; say so, as for any other.
     if (res.requests && (await markChecked(id, res.remote.doc)) && ticksDiffer(res.remote.doc, target)
       && !res.warnings.includes(CHECKS_WARNING)) res.warnings.push(CHECKS_WARNING);

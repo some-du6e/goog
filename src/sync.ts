@@ -12,9 +12,10 @@ import {basename, dirname, join, resolve} from "node:path";
 import {createTwoFilesPatch} from "diff";
 import {diff3Merge} from "node-diff3";
 import {CACHE_DIR, readJson, writeAtomic, writeJson} from "./config.ts";
-import {type Kind, backendOfText, backends, kindOf} from "./backend.ts";
+import {type Fetched, type Kind, backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError, markerLine, parseHeader} from "./format.ts";
 import {ApiError} from "./google.ts";
+import type {Typing} from "./typing.ts";
 
 // ---------- refs ----------
 
@@ -367,7 +368,8 @@ export interface PushOutcome {
 
 const isRevisionClash = (e: unknown) => e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message);
 
-export async function push(file: string, opts: {dryRun?: boolean; expectId?: string} = {}): Promise<PushOutcome> {
+// `typing` types new text into a doc instead of inserting it (goog push --type).
+export async function push(file: string, opts: PushOpts = {}): Promise<PushOutcome> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await pushOnce(file, opts);
@@ -379,7 +381,13 @@ export async function push(file: string, opts: {dryRun?: boolean; expectId?: str
   }
 }
 
-async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string}): Promise<PushOutcome> {
+interface PushOpts {
+  dryRun?: boolean;
+  expectId?: string;
+  typing?: Typing;
+}
+
+async function pushOnce(file: string, opts: PushOpts): Promise<PushOutcome> {
   if (!existsSync(file)) throw new SyncError(`${file} doesn't exist`);
   const dryRun = !!opts.dryRun;
   const ours = readText(file);
@@ -391,6 +399,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     throw new SyncError(`${file} was synced with ${was} ${base.id}, but its first line now names ${head.kind} ${id}. Put back <!-- goog ${was} ${base.id} -->, or run goog pull ${id} -o ${file} --force to make this file follow that doc.`);
   }
   const be = backends[head.kind];
+  if (opts.typing && head.kind !== "doc") throw new SyncError("--type works on docs only; a deck's text goes in as usual with goog push");
   if (hasConflictMarkers(ours.text)) be.parse(ours.text); // throws a FormatError pointing at the marker
   const remote = await be.fetch(id);
   const theirs = remote.text;
@@ -433,7 +442,12 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
       planned: p.requests, patch: patch(file, theirs, act.text, "doc", "after push"),
     };
   }
-  const res = await be.push(id, target, {rev: remote.rev, first: remote});
+  // Typing can take minutes, and can be stopped partway. Each pass's writes
+  // are goog's own, so the doc as it is then is a fair base: the next push
+  // types the rest instead of seeing a conflict in the half-typed paragraph.
+  // Not after a merge, though: the file lacks the doc's edits until the end.
+  const onWrote = opts.typing && !act.merged ? (f: Fetched) => save(f.text, f.rev) : undefined;
+  const res = await be.push(id, target, {rev: remote.rev, first: remote, typing: opts.typing, onWrote});
   out.requests = res.requests;
   out.warnings = res.warnings;
   out.status = res.requests ? "pushed" : "unchanged";
