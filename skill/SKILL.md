@@ -1,6 +1,6 @@
 ---
 name: goog
-description: Read and edit Google Docs and Slides from the shell with goog, as a text file, in seconds and without a browser. Use for any Google Docs or Slides link to read, fill in, answer, highlight, reformat, or rearrange, including schoolwork and Google Classroom assignments.
+description: Read and edit Google Docs and Slides from the shell with goog, as a text file, in seconds and without a browser. Use for any Google Docs or Slides link to read, fill in, answer, highlight, reformat, or rearrange, including schoolwork and Google Classroom assignments, and to get what a YouTube video says (its transcript) from a link.
 ---
 
 # goog
