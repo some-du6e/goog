@@ -8,7 +8,7 @@ import {CHECKS_WARNING, plan as planDoc, ticksDiffer, type PlanRemote} from "./g
 import {DRIVE, api} from "./google.ts";
 import {parse as parseDeck, serialize as serializeDeck} from "./slides-format.ts";
 import {plan as planDeck} from "./slides-plan.ts";
-import {fetchDeck, fetchDeckRev, pushDeck, saveDeckImages} from "./slides.ts";
+import {drawInBackground, fetchDeck, fetchDeckRev, pushDeck} from "./slides.ts";
 import type {Typing} from "./typing.ts";
 
 export type Kind = "doc" | "slides";
@@ -33,7 +33,10 @@ export interface Backend {
   // `typing`, `onWrote` (the doc after each pass's writes) and `onSignal`
   // (called on Ctrl+C/kill mid-push, before the process dies) are docs only.
   push(id: string, target: any, opts: {rev?: string; first: Fetched; typing?: Typing; onWrote?: (f: Fetched) => void; onSignal?: () => Promise<void>}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
-  saveImages(f: Fetched, dir: string): Promise<{images: string[]; slides?: string[]}>;
+  // One or the other: save the images now, or in a background process (see
+  // drawInBackground). The object lets a backend also name slide pictures.
+  saveImages?(f: Fetched, dir: string): Promise<{images: string[]; slides?: string[]}>;
+  saveImagesLater?(id: string, dir: string): boolean;
 }
 
 const docs: Backend = {
@@ -76,7 +79,7 @@ const slides: Backend = {
     const res = await pushDeck(id, target, {rev: opts.rev, first: opts.first.remote});
     return {fetched: {text: serializeDeck(res.remote.deck), rev: res.remote.deck.rev, remote: res.remote}, requests: res.requests, warnings: res.warnings};
   },
-  saveImages: (f, dir) => saveDeckImages(f.remote, dir),
+  saveImagesLater: drawInBackground,
 };
 
 export const backends: Record<Kind, Backend> = {doc: docs, slides};

@@ -29,8 +29,11 @@ goog help                  # everything else
   watcher has pushed that exact content. A status about an earlier save never
   counts.
 - Exit codes: 0 ok, 1 error, 2 conflict, 3 timed out. `--json` works on
-  `status`, `wait`, `push`, `pull`, `diff`, `check`, `ls`, `new`, `stop`, `skill`,
-  `classroom`, `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
+  `status`, `wait`, `push`, `pull`, `diff`, `check`, `pics`, `ls`, `new`, `stop`,
+  `skill`, `classroom`, `transcript`, `log` and `edit`. With `--json`, errors are printed as
+  `{"ok":false,"error":…}`. A deck's `pull` and `push` say `"drawing":true` while the
+  slide pictures are drawn (`false` if the draw couldn't start), as does `edit --bg`
+  while a draw runs.
 - `goog log <file>` shows what the watcher did: pushes, pulls, conflicts,
   retries.
 - `goog push <file> --type` types new text in through the API, a few
@@ -134,8 +137,13 @@ Speaker notes, one paragraph per line.
 
 Text inside a shape, table cell or `<notes>` is written as in a doc. The
 font, size and color most of an object's text shares go on its tag, so the
-text itself stays readable. Pulling also saves each slide as a picture
-(`<id>.files/slide-N.png`) next to the deck's images.
+text itself stays readable. Pulling and pushing also draw each slide as a
+picture (`<id>.files/slide-N.png`) next to the deck's images. That happens in
+the background, since it's most of a pull's time, and only for slides that
+changed; `goog pics <file>` waits for it. With `mutool` installed (apt's
+`mupdf-tools`), many slides are drawn from one PDF export instead of slide by
+slide, which Google limits to about 60 a minute: an 88-slide deck takes about
+25s instead of a minute and a half.
 
 From the file you can edit text, move, resize and rotate objects, recolor
 fills and outlines (`#rrggbb` or theme colors like `accent1`), move a line's ends, add or

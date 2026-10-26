@@ -11,7 +11,7 @@ import {FormatError} from "./format.ts";
 import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseCourseRef, parseWorkRef, type Attachment, type Work} from "./classroom.ts";
 import {createDoc} from "./gdocs.ts";
 import {clock, parseVideo, timed, transcript} from "./youtube.ts";
-import {createDeck} from "./slides.ts";
+import {createDeck, drawNow, drawingPid, waitForDrawing} from "./slides.ts";
 import {DEFAULT_WPM, type Typing} from "./typing.ts";
 import {DRIVE, api} from "./google.ts";
 import {
@@ -66,6 +66,8 @@ One-shot
       --wpm N                   typing speed for --type (default 45)
   goog diff <file>              what a push would change in the doc, as a unified diff
   goog cat <doc>                print the doc as .goog without writing a file
+  goog pics <file>              a deck's slides as pictures, once they're drawn
+      --timeout SECONDS         default 300
   goog check <file>             parse the file and report format errors
 
 Drive
@@ -108,7 +110,10 @@ Classroom
 
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
-ls, new, stop, skill, classroom, transcript, edit (one event per line), log, and errors ({"ok":false,"error":…}).
+pics, ls, new, stop, skill, classroom, transcript, edit (one event per line), log,
+and errors ({"ok":false,"error":…}). A deck's pull and push say "drawing":true
+while the slide pictures are drawn (false if the draw couldn't start), as does
+edit --bg while a draw runs; goog pics --json lists them once they're done.
 Exit codes: 0 ok, 1 error, 2 conflict (markers written to the file), 3 timed out.
 
 Conflicts: when the doc and the file changed the same lines, the file gets
@@ -173,8 +178,9 @@ default style, so to match neighbouring text, write inside the same tags.
 const SLIDES_HELP = `.goog format for Google Slides
 
 The file mirrors the deck: whatever you leave as pulled stays exactly as it is,
-so change only what you mean to. Pull also saves each slide as a picture
-(<file>.files/slide-N.png); look at it before moving things.
+so change only what you mean to. Pull and push also draw each slide as a
+picture (<file>.files/slide-N.png) in the background; goog pics <file> waits
+for them. Look at them before moving things.
 
   <slide id="…" layout="title-and-body">   one per slide, in order; <slide … skip>
                                            is skipped when presenting
@@ -483,11 +489,13 @@ async function cmdEditBackground(id: string, file: string, extra: string[], asJs
     if (ready || Date.now() > deadline) {
       child.unref();
       const status = ready ? s!.status : "starting";
-      if (asJson) json({ok: true, file, id, pid: child.pid, status, message: s?.message, images: savedImages(file)});
+      const drawing = drawingPid(imagesDir(file)) ? true : undefined;
+      if (asJson) json({ok: true, file, id, pid: child.pid, status, message: s?.message, images: savedImages(file), drawing});
       else {
         out(`watching ${show(file)} (pid ${child.pid}): ${status}${s?.message ? `: ${s.message}` : ""}`);
         out(`after saving: goog wait ${show(file)}   activity: goog log ${show(file)}   stop: goog stop ${show(file)}`);
-        outImages(savedImages(file));
+        if (drawing) out(DRAWING_NOTE(file));
+        else outImages(savedImages(file));
         outContents(file);
       }
       return;
@@ -497,7 +505,24 @@ async function cmdEditBackground(id: string, file: string, extra: string[], asJs
 
 function savedImages(file: string): string[] {
   const dir = imagesDir(file);
-  return existsSync(dir) ? readdirSync(dir).map((f) => join(dir, f)) : [];
+  return existsSync(dir) ? readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => join(dir, f)) : [];
+}
+
+const DRAWING_NOTE = (file: string) => `slides as pictures: being drawn in the background into ${show(imagesDir(file))}/slide-N.png; goog pics ${show(file)} waits for them and lists them (look before moving things)`;
+
+async function cmdPics(arg: string | undefined, timeoutS: number, asJson: boolean) {
+  const file = need(arg, "goog pics <file>");
+  if (!existsSync(file)) throw new Error(`${file} doesn't exist`);
+  const dir = imagesDir(file);
+  if (!existsSync(dir)) throw new Error(`${file} has no pictures yet; goog pull ${show(file)} draws them`);
+  const w = await waitForDrawing(dir, timeoutS * 1000);
+  if (w.status === "failed") throw new Error(w.message);
+  if (w.status === "drawing") {
+    process.exitCode = EXIT.timeout;
+    return asJson ? json({ok: false, file, status: "drawing", message: w.message}) : out(w.message);
+  }
+  if (asJson) return json({ok: true, file, status: "done", images: savedImages(file)});
+  outImages(savedImages(file));
 }
 
 function outImages(images: string[]) {
@@ -798,8 +823,12 @@ export async function main(argv: string[]) {
       const file = flags.out ?? ref.file ?? `${ref.id}.goog`;
       const r = await pull(ref.id, file, {force: flags.force, kind: ref.kind});
       if (asJson) return json({ok: true, ...r, file: resolve(file)});
-      out(`${r.replaced ? "replaced" : "pulled into"} ${file}${r.slides ? " (a Slides deck: goog help slides has the format)" : ""}`);
-      outImages([...(r.slides ?? []), ...r.images]);
+      // drawing is set for decks only: false when the draw couldn't start.
+      const deck = r.drawing !== undefined;
+      out(`${r.replaced ? "replaced" : "pulled into"} ${file}${deck ? " (a Slides deck: goog help slides has the format)" : ""}`);
+      if (r.drawing) out(DRAWING_NOTE(file));
+      else if (deck) out(`couldn't start drawing the slides as pictures; is ${show(imagesDir(file))} writable?`);
+      else outImages(r.images);
       return outContents(file);
     }
     case "push": {
@@ -818,19 +847,31 @@ export async function main(argv: string[]) {
       if (asJson) return json({ok: r.status !== "conflict", ...r});
       for (const w of r.warnings) out(`warning: ${w}`);
       const again = `${file} was saved again during the push; that save isn't in the doc yet, so run goog push again`;
-      if (r.savedDuring && r.status === "unchanged") return out(again);
+      // Last, whatever happened: the deck may look different now.
+      const drawing = () => {
+        if (r.drawing) out(`the changed slides are being drawn again; goog pics ${show(file)} waits for them`);
+        else if (r.drawing === false) out(`couldn't start drawing the slides as pictures; is ${show(imagesDir(file))} writable?`);
+      };
+      if (r.savedDuring && r.status === "unchanged") {
+        out(again);
+        return drawing();
+      }
       const dry = r.dryRun;
       if (r.status === "conflict") {
-        return out(dry
+        out(dry
           ? `would conflict: the doc changed in the same places as the file (${r.conflicts} conflict(s)). A real push writes <<<<<<< markers into ${file}.`
           : `the doc changed in the same places as the file: ${r.conflicts} conflict(s) are marked with <<<<<<< in ${file}. Keep what you want, delete the marker lines, and push again.`);
+        return drawing();
       }
       if (r.status === "pulled") {
-        if (dry) out(`nothing to push; the doc has edits ${file} doesn't. A real push (or goog pull) brings them in:`);
-        else return out(`nothing to push; pulled edits made in the doc into ${file}`);
-        return out(r.patch ?? "");
+        if (dry) return out(`nothing to push; the doc has edits ${file} doesn't. A real push (or goog pull) brings them in:\n${r.patch ?? ""}`);
+        out(`nothing to push; pulled edits made in the doc into ${file}`);
+        return drawing();
       }
-      if (r.status === "unchanged") return out(r.rewrote ? `nothing to push; ${file} updated to match the doc` : "nothing to push; the doc already matches");
+      if (r.status === "unchanged") {
+        out(r.rewrote ? `nothing to push; ${file} updated to match the doc` : "nothing to push; the doc already matches");
+        return drawing();
+      }
       const notes = [r.merged ? "merged with edits made in the doc" : "", r.noBase ? `first push of ${file}, so the doc now matches it exactly` : "", r.rewrote ? `${file} updated to match` : ""].filter(Boolean);
       if (dry) {
         out(`would send ${r.requests} edit(s)${r.merged ? ", merged with edits made in the doc" : ""}${r.noBase ? `; ${file} was never synced, so the doc would be made to match it exactly` : ""}`);
@@ -838,6 +879,7 @@ export async function main(argv: string[]) {
       }
       out(`pushed ${r.requests} edit(s)${notes.length ? `; ${notes.join("; ")}` : ""}`);
       if (r.savedDuring) out(again);
+      drawing();
       return;
     }
     case "diff": {
@@ -896,6 +938,11 @@ export async function main(argv: string[]) {
       for (const s of all) printStatus(s);
       return;
     }
+    case "pics":
+      return cmdPics(pos[0], seconds(flags.timeout, 300), asJson);
+    case "draw":
+      // Run by drawInBackground, not by people.
+      return drawNow(need(pos[0], "goog draw <deck> <dir>"), need(pos[1], "goog draw <deck> <dir>"));
     case "wait":
       return cmdWait(pos[0], seconds(flags.timeout, 120), asJson);
     case "cat": {
