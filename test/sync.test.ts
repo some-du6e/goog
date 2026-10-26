@@ -186,6 +186,82 @@ test("pull won't drop unpushed edits to a synced file unless --force", async () 
   assert.equal(readFileSync(f, "utf8"), doc("one"));
 });
 
+test("a typed push stopped partway carries on next time instead of conflicting", async () => {
+  const f = fileIn("typed.goog");
+  const remote = fakeDoc(doc("Q1?", "Q2?"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+  const be = backends.doc as any;
+  const push = be.push;
+  // The first pass types answer one and half of answer two, then it's killed.
+  be.push = async (_id: string, _target: any, opts: any) => {
+    remote.text = doc("Q1?", "Answer one.", "Q2?", "Answer");
+    opts.onWrote({text: remote.text, rev: "r2", remote: null});
+    throw new Error("killed");
+  };
+  const typing = {wpm: 45, sleep: async () => {}};
+  await assert.rejects(S.push(f, {typing}), /killed/);
+  be.push = push;
+  const r = await S.push(f, {typing});
+  assert.equal(r.status, "pushed");
+  assert.equal(remote.text, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+  assert.equal(readFileSync(f, "utf8"), remote.text);
+});
+
+test("a mid-pass kill saves the partial typing as the base, so the next push resumes", async () => {
+  const f = fileIn("typed-midpass.goog");
+  const remote = fakeDoc(doc("Q1?", "Q2?"));
+  await S.pull(ID, f, {kind: "doc"});
+  writeFileSync(f, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+  const be = backends.doc as any;
+  const push = be.push;
+  // Kill DURING a pass: the pass's writes partially landed but onWrote was
+  // never called for it. pushDoc's catch should refetch and save the partial.
+  be.push = async (_id: string, _target: any, opts: any) => {
+    // Simulate typeBatch throwing mid-way: some writes landed.
+    remote.text = doc("Q1?", "Answer one.", "Q2?", "Ans");
+    // The real pushDoc catch refetches and calls onWrote with this state.
+    opts.onWrote({text: remote.text, rev: "r2", remote: null});
+    throw new Error("killed");
+  };
+  const typing = {wpm: 45, sleep: async () => {}};
+  await assert.rejects(S.push(f, {typing}), /killed/);
+  be.push = push;
+  // The base should now include the partial typing, so reconcile sees
+  // doc === base and just pushes the rest — no conflict.
+  const r = await S.push(f, {typing});
+  assert.equal(r.status, "pushed");
+  assert.equal(remote.text, doc("Q1?", "Answer one.", "Q2?", "Answer two."));
+});
+
+test("a typed push after a MERGE keeps onWrote/onSignal off — so a mid-pass stop can conflict", async () => {
+  // onWrote/onSignal are deliberately off when the push merged doc edits in
+  // (the file lacks them until the end), so a mid-pass stop leaves the base
+  // stale and a retry can conflict instead of resuming. README/SKILL.md
+  // qualify the resume promise with exactly this; pin the wiring.
+  const f = fileIn("typed-merge.goog");
+  const remote = fakeDoc(doc("Q1?", "Q2?", "Q3?"));
+  await S.pull(ID, f, {kind: "doc"});
+  // Both sides change different lines: the file answers Q2, the doc rewords
+  // Q1 — different regions, so they merge cleanly.
+  writeFileSync(f, doc("Q1?", "Q2?", "Answer two.", "Q3?"));
+  remote.text = doc("Q1, reworded?", "Q2?", "Q3?");
+  const be = backends.doc as any;
+  const push = be.push;
+  be.push = async (_id: string, _target: any, opts: any) => {
+    assert.equal(opts.onWrote, undefined, "onWrote must stay off after a merge");
+    assert.equal(opts.onSignal, undefined, "onSignal must stay off after a merge");
+    throw new Error("killed");
+  };
+  await assert.rejects(S.push(f, {typing: {wpm: 45, sleep: async () => {}}}), /killed/);
+  be.push = push;
+  // The kill saved no base (onWrote was off), so the next push still has to
+  // merge — it does, and lands both sides.
+  const r = await S.push(f, {typing: {wpm: 45, sleep: async () => {}}});
+  assert.equal(r.status, "pushed");
+  assert.equal(remote.text, doc("Q1, reworded?", "Q2?", "Answer two.", "Q3?"));
+});
+
 test("a save made while push reads the doc isn't overwritten", async () => {
   const f = fileIn("race-pull.goog");
   const remote = fakeDoc(doc("one", "two", "three"));

@@ -12,6 +12,7 @@ import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, 
 import {createDoc} from "./gdocs.ts";
 import {clock, parseVideo, timed, transcript} from "./youtube.ts";
 import {createDeck, drawNow, drawingPid, waitForDrawing} from "./slides.ts";
+import {DEFAULT_WPM, type Typing} from "./typing.ts";
 import {DRIVE, api} from "./google.ts";
 import {
   bodyOf, canonBody, imagesDir, isAlive, listStates, logPath, patch, pull, push, readBase, readState, readText, reconcile,
@@ -56,8 +57,13 @@ One-shot
   goog pull <doc> [-o FILE]     download the doc into FILE. Refuses to drop unpushed
                                 changes, or a file goog never synced that differs
                                 from the doc, unless --force
-  goog push <file> [--dry-run]  send the file's changes to the doc once, merging with
+  goog push <file> [--dry-run] [--type [--wpm N]]
+                                send the file's changes to the doc once, merging with
                                 edits made in the doc since the last sync
+      --type                    type new text in, a few words a write at about 45
+                                words a minute, so version history shows it typed
+                                (docs only; slow — run it in the background)
+      --wpm N                   typing speed for --type (default 45)
   goog diff <file>              what a push would change in the doc, as a unified diff
   goog cat <doc>                print the doc as .goog without writing a file
   goog pics <file>              a deck's slides as pictures, once they're drawn
@@ -775,6 +781,8 @@ export async function main(argv: string[]) {
       lang: {type: "string"},
       from: {type: "string"},
       to: {type: "string"},
+      type: {type: "boolean"},
+      wpm: {type: "string"},
     },
   });
   const asJson = !!flags.json;
@@ -824,15 +832,17 @@ export async function main(argv: string[]) {
       return outContents(file);
     }
     case "push": {
-      const file = need(pos[0], "goog push <file> [--dry-run]");
+      const file = need(pos[0], "goog push <file> [--dry-run] [--type [--wpm N]]");
       const timeout = seconds(flags.timeout, 120);
       const w = watcherOf(file);
+      const typing = flags.type ? typingOf(flags.wpm, asJson) : undefined;
+      if (w && typing && !flags["dry-run"]) throw new Error(`goog edit (pid ${w.pid}) is syncing ${file} and would push it without typing; stop it first with goog stop ${file}`);
       if (w && !flags["dry-run"]) {
         // Two pushers would race; let the running goog edit do it.
         if (!asJson) out(`goog edit (pid ${w.pid}) is syncing ${file}; waiting for it to push`);
         return cmdWait(file, timeout, asJson);
       }
-      const r = await push(file, {dryRun: flags["dry-run"]});
+      const r = await push(file, {dryRun: flags["dry-run"], typing});
       if (r.status === "conflict") process.exitCode = EXIT.conflict;
       if (asJson) return json({ok: r.status !== "conflict", ...r});
       for (const w of r.warnings) out(`warning: ${w}`);
@@ -984,6 +994,17 @@ function count(v: string | undefined, def: number, flag: string): number {
   if (v === undefined) return def;
   if (!/^\d+$/.test(v.trim()) || !Number(v)) throw new Error(`${flag} takes a whole number from 1 (got "${v}")`);
   return Number(v);
+}
+
+// goog push --type: paced to --wpm, with a line on stderr as each paragraph
+// is done, since typing a long answer takes minutes.
+function typingOf(wpm: string | undefined, quiet: boolean): Typing {
+  return {
+    wpm: count(wpm, DEFAULT_WPM, "--wpm"),
+    onChunk: (typed, total) => {
+      if (!quiet && typed === total) process.stderr.write(`typed a paragraph (${total} characters)\n`);
+    },
+  };
 }
 
 function need(v: string | undefined, usage: string): string {

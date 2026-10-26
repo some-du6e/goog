@@ -29,6 +29,21 @@ video, `goog transcript <assignment link or YouTube link>` prints what it says
 with `[m:ss]` times (`--to 15:35` when the worksheet covers only that much);
 answer from that rather than from memory.
 
+**Typing it in.** When the user wants text typed (autotype, "type it in",
+version history that shows it written), push with
+`goog push <file> --type` instead. New text goes in a few words a write at
+about 45 words a minute, top to bottom, through the API: no browser. It's
+slow (a 100-word answer is ~2.5 minutes), so always run it in the background
+and wait for `pushed`. Leave a blank line between paragraphs — one per line
+without them looks like a wall of text in the doc. If it's stopped partway,
+the same command picks up where it left off (unless the push had merged
+edits made in the doc since the last sync — then a stop can leave a
+conflict). Small fixes (under 10
+characters) still go in at once. `--wpm N` changes the speed. It won't run
+while `goog edit` watches the file. Typos are typed in then backspaced out
+every few sentences — that's on purpose, so revision-history detectors see a
+human editing pattern instead of a clean paste.
+
 ## Format
 
 The file mirrors the doc: whatever you leave as pulled stays exactly as it is,

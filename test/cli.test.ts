@@ -2,7 +2,7 @@
 // command here fails or finishes before it would talk to Google.
 
 import assert from "node:assert/strict";
-import {spawnSync} from "node:child_process";
+import {execFileSync, spawnSync} from "node:child_process";
 import {existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -74,6 +74,31 @@ test("errors: usage, unknown command, bad refs, --json errors", () => {
 test("stop and log with nothing running", () => {
   assert.equal(goog("stop").stdout.trim(), "no goog edit is running");
   assert.deepEqual(JSON.parse(goog("log", "--json").stdout), []);
+});
+
+test("push --type refuses decks, a watching goog edit, and a bad --wpm", () => {
+  // A deck: the kind check fires before any fetch.
+  const deck = join(tmp, "deck.goog");
+  writeFileSync(deck, `<!-- goog slides ${ID} -->\n`);
+  const d = goog("push", deck, "--type");
+  assert.equal(d.status, 1);
+  assert.match(d.stderr, /docs only/);
+  // A watching goog edit would push without typing. Register a fake watcher
+  // (its pid is this shell, so it reads as alive) via sync.ts's own setter.
+  const watched = join(tmp, "watched.goog");
+  writeFileSync(watched, `<!-- goog doc ${ID} -->\n`);
+  const sync = join(tmp, "mkstate.js");
+  writeFileSync(sync, `const s = await import(${JSON.stringify(new URL("../src/sync.ts", import.meta.url).href)});\nif (process.argv[5] === "rm") s.forgetState(process.argv[2]);\nelse s.setState(process.argv[2], {status: "synced", id: process.argv[3], pid: Number(process.argv[4])});\n`);
+  execFileSync(process.execPath, ["--experimental-strip-types", sync, watched, ID, String(process.ppid)], {env});
+  const w = goog("push", watched, "--type");
+  assert.equal(w.status, 1);
+  assert.match(w.stderr, /would push it without typing/);
+  // Don't leak the fake watcher into later tests' bare status/stop/log calls.
+  execFileSync(process.execPath, ["--experimental-strip-types", sync, watched, ID, "0", "rm"], {env});
+  // --wpm that isn't a number is rejected before any push.
+  const bad = goog("push", "ok.goog", "--type", "--wpm", "abc");
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /--wpm/);
 });
 
 test("skill: hint until installed, then a symlink per agent", () => {

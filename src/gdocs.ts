@@ -2,7 +2,8 @@ import {mkdirSync, readdirSync, writeFileSync} from "node:fs";
 import {join} from "node:path";
 import {ApiError, DOCS, DRIVE, api} from "./google.ts";
 import {fromApi} from "./gdocs-read.ts";
-import {CHECKS_WARNING, adoptNew, plan, type Plan, type PlanRemote} from "./gdocs-plan.ts";
+import {CHECKS_WARNING, adoptNew, plan, typeable, type Plan, type PlanRemote} from "./gdocs-plan.ts";
+import {chunks, flubs, type Typing} from "./typing.ts";
 import type {Block, Doc, Para} from "./model.ts";
 
 export function toRemote(raw: any): PlanRemote {
@@ -111,20 +112,77 @@ const MAX_PASSES = 8;
 // passes are guarded the same way, and an edit that lands between a write and
 // the next read stops the push too, rather than being planned away. Both
 // throw an ApiError whose message mentions "required revision".
+//
+// With `typing`, text is typed in instead (see typeBatch), a paragraph a pass,
+// so passes that type don't count towards MAX_PASSES. `onPass` sees each plan,
+// and `onWrote` the doc after each pass's writes.
 export async function pushDoc(
   id: string,
   target: Doc | Block[],
-  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; io?: DocsIO} = {},
+  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing; onSignal?: () => Promise<void>; signal?: {on(sig: string, fn: any): void; off(sig: string, fn: any): void; kill(sig: string): void}} = {},
 ): Promise<PushResult> {
   const io = opts.io ?? LIVE;
+  // A typed pass runs for minutes, so Ctrl+C or a kill lands mid-pass far more
+  // often than between passes. Save where the typing got to (like the catch
+  // below does for a failed write) so the next push resumes instead of
+  // conflicting, then re-signal so the exit code still says how we died. Both
+  // listeners come off first: with them still on, the re-kill would re-enter
+  // this handler (and loop forever), and a second impatient Ctrl+C would start
+  // another fetch instead of forcing the exit it expects.
+  // `signal` is the signal source/sink, process by default; tests pass a fake
+  // because the re-kill is a REAL signal — process.emit("SIGINT") in a test
+  // would make the handler kill the test runner.
+  const signal = opts.signal ?? {on: (s, f) => process.on(s as any, f), off: (s, f) => process.off(s as any, f), kill: (s) => process.kill(process.pid, s as any)};
+  const typingCtl = {aborted: false, inFlight: Promise.resolve()};
+  const onSignal = async (sig: "SIGINT" | "SIGTERM") => {
+    signal.off("SIGINT", onSignal);
+    signal.off("SIGTERM", onSignal);
+    // Freeze the typing before snapshotting the doc, and wait for any write
+    // already on the wire: a chunk that lands after the fetch would leave the
+    // base one chunk short, and the line-based merge can't express "doc is a
+    // prefix of base" — the very conflict this save exists to prevent.
+    typingCtl.aborted = true;
+    await typingCtl.inFlight;
+    try {
+      await opts.onSignal?.();
+    } finally {
+      // Even if the save fails (offline, doc deleted), die the way the signal
+      // asked — not as an unhandled rejection with the wrong exit code.
+      signal.kill(sig);
+    }
+  };
+  if (opts.onSignal) {
+    signal.on("SIGINT", onSignal);
+    signal.on("SIGTERM", onSignal);
+  }
+  try {
+    return await pushDocPasses(id, target, opts, io, typingCtl);
+  } finally {
+    signal.off("SIGINT", onSignal);
+    signal.off("SIGTERM", onSignal);
+  }
+}
+
+async function pushDocPasses(
+  id: string,
+  target: Doc | Block[],
+  opts: {rev?: string; first?: PlanRemote; onPass?: (p: Plan, pass: number) => void; onWrote?: (remote: PlanRemote) => void; io?: DocsIO; typing?: Typing},
+  io: DocsIO,
+  typingCtl: {aborted: boolean; inFlight: Promise<void>},
+): Promise<PushResult> {
   // New objects get their ids written into this copy as they're created.
   const want = structuredClone(target);
   let remote = opts.first ?? toRemote(await io.get(id));
   let requests = 0;
   let last = "";
+  let left = MAX_PASSES;
   const warnings: string[] = [];
-  for (let pass = 0; pass < MAX_PASSES; pass++) {
-    const p = plan(remote, want);
+  for (let pass = 0; ; pass++) {
+    if (!left) {
+      warnings.push(`stopped after ${MAX_PASSES} passes; the doc may not match the file exactly`);
+      return {remote, requests, passes: pass, warnings};
+    }
+    const p = plan(remote, want, {typing: !!opts.typing});
     opts.onPass?.(p, pass);
     // Only the first read knows which items are ticked (see markChecked), so
     // only it can tell whether the file ticks differently; backend.ts checks
@@ -138,7 +196,48 @@ export async function pushDoc(
     }
     last = sig;
     const rev = pass === 0 ? opts.rev ?? remote.doc.rev : remote.doc.rev;
-    const res = await io.batch(id, {requests: p.requests, writeControl: rev ? {requiredRevisionId: rev} : undefined});
+    const typed = !!opts.typing && p.requests.some((r) => typeable(r) || r.insertText?.text.includes("\n"));
+    if (!typed) left--;
+    const res = await (async (): Promise<{replies?: any[]; writeControl?: {requiredRevisionId?: string} | undefined} | null> => {
+      try {
+        return opts.typing
+          ? await typeBatch(io, id, p.requests, rev, opts.typing, typingCtl)
+          : await io.batch(id, {requests: p.requests, writeControl: rev ? {requiredRevisionId: rev} : undefined});
+      } catch (e) {
+        // The signal handler stopped the typing and is snapshotting the doc
+        // itself (it kills the process after); don't surface the internal
+        // abort as the push's error. Refetch anyway: should the process
+        // survive (an embedded caller, a failed kill), the result's remote
+        // must be the doc as it actually is, not the pre-pass state — a
+        // caller that rewrote the file from the pre-pass text would lose the
+        // typed text.
+        if (e instanceof TypingAborted) return null;
+        // A mid-typing failure leaves the doc between the base and the file;
+        // save where it got to so the next push resumes instead of conflicting.
+        // Not for a revision clash, though: then the doc also holds someone
+        // else's edit, and saving it as the base would make the automatic
+        // retry take the theirs-equals-base branch and push the file over that
+        // edit wholesale — the same fold-in the after-write rev check below
+        // refuses by throwing before onWrote.
+        const clash = e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message);
+        if (opts.onWrote && !clash) {
+          try {
+            opts.onWrote(toRemote(await io.get(id)));
+          } catch {
+            // the doc's gone or unreadable; the original error says more
+          }
+        }
+        throw e;
+      }
+    })();
+    if (!res) {
+      try {
+        remote = toRemote(await io.get(id));
+      } catch {
+        // keep the pre-pass remote; the handler's base save is the one that matters
+      }
+      return {remote, requests, passes: pass, warnings};
+    }
     requests += p.requests.length;
     for (const c of p.created) c.apply(res.replies?.[p.requests.indexOf(c.req)]);
     remote = toRemote(await io.get(id));
@@ -147,9 +246,105 @@ export async function pushDoc(
     if (after && remote.doc.rev && after !== remote.doc.rev) {
       throw new ApiError(400, `required revision changed during push: the doc was edited after goog's write (pass ${pass + 1}); merge again and retry`);
     }
+    opts.onWrote?.(remote);
   }
-  warnings.push(`stopped after ${MAX_PASSES} passes; the doc may not match the file exactly`);
-  return {remote, requests, passes: MAX_PASSES, warnings};
+}
+
+// Sends a batch with each long insertText typed in: split into chunks (see
+// typing.ts), each its own write at the index the one before it ended. The
+// requests around it go as they are, so every later request finds its index
+// where the batch expected it. Each write is guarded by the revision the one
+// before it made, so an edit made in the doc meanwhile stops the push.
+//
+// A 400 "required revision" can mean two things: Docs forgot the revision (a
+// server tick; observed live — the doc's rev is still ours), or someone else
+// edited (the rev has moved on). Only the first is retried, once, without the
+// guard; the second rethrows so the push stops instead of typing into the
+// other edit.
+// Thrown when a signal stops the typing mid-step; pushDoc's handler is what
+// does the stopping, and it exits the process itself, so this only surfaces
+// if the process is still alive to see it (a second push sharing the ctl).
+class TypingAborted extends Error {}
+
+async function typeBatch(
+  io: DocsIO,
+  id: string,
+  requests: any[],
+  rev: string | undefined,
+  t: Typing,
+  ctl: {aborted: boolean; inFlight: Promise<void>},
+) {
+  const sleep = t.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const replies: any[] = [];
+  let guard = rev;
+  const send = async (reqs: any[]): Promise<any[]> => {
+    const call = (async () => {
+      try {
+        const res = await io.batch(id, {requests: reqs, writeControl: guard ? {requiredRevisionId: guard} : undefined});
+        // An unguarded write gets no writeControl back; refetch so the next
+        // write is guarded again rather than leaving the rest of the batch naked.
+        guard = res.writeControl?.requiredRevisionId ?? (guard ? undefined : toRemote(await io.get(id)).doc.rev);
+        return res.replies ?? reqs.map(() => ({}));
+      } catch (e) {
+        if (!guard || !(e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message))) throw e;
+        let now: string | undefined;
+        try {
+          now = toRemote(await io.get(id)).doc.rev;
+        } catch {
+          throw e; // can't tell whether it's a tick or an edit; don't type blind
+        }
+        if (!now || now !== guard) throw e; // someone else edited; don't type into it
+        guard = undefined; // Docs forgot the rev; retry once without it
+        return send(reqs);
+      }
+    })();
+    // Track the write that's on the wire so the signal handler can wait for
+    // it before snapshotting the doc (see pushDoc's onSignal).
+    ctl.inFlight = call.then(
+      () => {},
+      () => {},
+    );
+    return call;
+  };
+  // Budget total as the sum of every step's insert (typos included), so done
+  // tracks keystrokes, not net text — a doubling typo can't push done past it.
+  const steps = requests.filter(typeable).map((r) => flubs(chunks(r.insertText.text, t), t));
+  const total = steps.flat().reduce((n, s) => n + ("insert" in s ? s.insert.length : 0), 0);
+  let done = 0;
+  let pending: any[] = [];
+  let at = 0;
+  for (const r of requests) {
+    if (!typeable(r)) {
+      pending.push(r);
+      continue;
+    }
+    // A signal stops the typing wherever it's got to; the handler is
+    // snapshotting the doc and can't race another write landing after it.
+    if (ctl.aborted) throw new TypingAborted();
+    if (pending.length) replies.push(...(await send(pending)));
+    pending = [];
+    const {location} = r.insertText;
+    const {index: _i, ...ctx} = location; // segmentId/tabId, for the backspaces
+    let index = location.index;
+    for (const s of steps[at++]) {
+      if (ctl.aborted) throw new TypingAborted();
+      await sleep(s.wait);
+      if (ctl.aborted) throw new TypingAborted();
+      if ("insert" in s) {
+        await send([{insertText: {location: {...location, index}, text: s.insert}}]);
+        index += s.insert.length;
+        done += s.insert.length;
+      } else {
+        await send([{deleteContentRange: {range: {startIndex: index - s.del, endIndex: index, ...ctx}}}]);
+        index -= s.del;
+      }
+      t.onChunk?.(done, total);
+    }
+    replies.push({});
+  }
+  if (ctl.aborted) throw new TypingAborted();
+  if (pending.length) replies.push(...(await send(pending)));
+  return {replies, writeControl: {requiredRevisionId: guard}};
 }
 
 export async function createDoc(title: string): Promise<string> {

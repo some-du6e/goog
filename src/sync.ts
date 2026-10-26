@@ -12,10 +12,11 @@ import {basename, dirname, join, resolve} from "node:path";
 import {createTwoFilesPatch} from "diff";
 import {diff3Merge} from "node-diff3";
 import {CACHE_DIR, readJson, writeAtomic, writeJson} from "./config.ts";
-import {type Kind, backendOfText, backends, kindOf} from "./backend.ts";
+import {type Fetched, type Kind, backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError, markerLine, parseHeader} from "./format.ts";
 import {ApiError} from "./google.ts";
 import {isAlive, startedAt} from "./proc.ts";
+import type {Typing} from "./typing.ts";
 
 export {isAlive, startedAt};
 
@@ -325,8 +326,8 @@ export async function pull(id: string, file: string, opts: {force?: boolean; kin
   writeBase(file, {id, text, rev: remote.rev});
   if (be.saveImagesLater) return {file, id, hash, replaced: exists, images: [], drawing: be.saveImagesLater(id, imagesDir(file))};
   // Images are a convenience; a failed download doesn't fail the pull.
-  const images = await be.saveImages!(remote, imagesDir(file)).catch(() => []);
-  return {file, id, hash, replaced: exists, images};
+  const pics = await be.saveImages!(remote, imagesDir(file)).catch((): {images: string[]; slides?: string[]} => ({images: []}));
+  return {file, id, hash, replaced: exists, images: pics.images};
 }
 
 export interface PushOutcome {
@@ -349,7 +350,8 @@ export interface PushOutcome {
 
 const isRevisionClash = (e: unknown) => e instanceof ApiError && e.status === 400 && /required revision/i.test(e.message);
 
-export async function push(file: string, opts: {dryRun?: boolean; expectId?: string} = {}): Promise<PushOutcome> {
+// `typing` types new text into a doc instead of inserting it (goog push --type).
+export async function push(file: string, opts: PushOpts = {}): Promise<PushOutcome> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await pushOnce(file, opts);
@@ -361,7 +363,13 @@ export async function push(file: string, opts: {dryRun?: boolean; expectId?: str
   }
 }
 
-async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string}): Promise<PushOutcome> {
+interface PushOpts {
+  dryRun?: boolean;
+  expectId?: string;
+  typing?: Typing;
+}
+
+async function pushOnce(file: string, opts: PushOpts): Promise<PushOutcome> {
   if (!existsSync(file)) throw new SyncError(`${file} doesn't exist`);
   const dryRun = !!opts.dryRun;
   const ours = readText(file);
@@ -373,6 +381,7 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
     throw new SyncError(`${file} was synced with ${was} ${base.id}, but its first line now names ${head.kind} ${id}. Put back <!-- goog ${was} ${base.id} -->, or run goog pull ${id} -o ${file} --force to make this file follow that doc.`);
   }
   const be = backends[head.kind];
+  if (opts.typing && head.kind !== "doc") throw new SyncError("--type works on docs only; a deck's text goes in as usual with goog push");
   if (hasConflictMarkers(ours.text)) be.parse(ours.text); // throws a FormatError pointing at the marker
   const remote = await be.fetch(id);
   const theirs = remote.text;
@@ -419,13 +428,29 @@ async function pushOnce(file: string, opts: {dryRun?: boolean; expectId?: string
   out.merged = act.merged;
   const target = be.parse(act.text);
   if (dryRun) {
-    const p = be.plan(remote, target);
+    // Plan with typing too, so the dry run shows what a typed push would
+    // actually send first (long inserts held back to one paragraph a pass).
+    const p = be.plan(remote, target, {typing: !!opts.typing});
     return {
       ...out, status: p.requests.length ? "pushed" : "unchanged", requests: p.requests.length, warnings: p.warnings,
       planned: p.requests, patch: patch(file, theirs, act.text, "doc", "after push"),
     };
   }
-  const res = await be.push(id, target, {rev: remote.rev, first: remote});
+  // Typing can take minutes, and can be stopped partway. Each pass's writes
+  // are goog's own, so the doc as it is then is a fair base: the next push
+  // types the rest instead of seeing a conflict in the half-typed paragraph.
+  // Not after a merge, though: the file lacks the doc's edits until the end.
+  const onWrote = opts.typing && !act.merged ? (f: Fetched) => save(f.text, f.rev) : undefined;
+  // Ctrl+C or a kill mid-typing never reaches a catch, so the base would
+  // stay stale and the next push would conflict with the half-typed
+  // paragraph. Save the partial as the base before the process dies.
+  const onSignal = onWrote
+    ? async () => {
+        const f = await be.fetch(id);
+        onWrote(f);
+      }
+    : undefined;
+  const res = await be.push(id, target, {rev: remote.rev, first: remote, typing: opts.typing, onWrote, onSignal});
   out.requests = res.requests;
   out.warnings = res.warnings;
   out.status = res.requests ? "pushed" : "unchanged";

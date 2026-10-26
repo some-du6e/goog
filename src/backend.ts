@@ -4,11 +4,12 @@
 
 import {parseHeader, parse as parseDoc, serialize as serializeDoc} from "./format.ts";
 import {fetchDoc, fetchRev, markChecked, pushDoc, saveImages} from "./gdocs.ts";
-import {CHECKS_WARNING, plan as planDoc, ticksDiffer} from "./gdocs-plan.ts";
+import {CHECKS_WARNING, plan as planDoc, ticksDiffer, type PlanRemote} from "./gdocs-plan.ts";
 import {DRIVE, api} from "./google.ts";
 import {parse as parseDeck, serialize as serializeDeck} from "./slides-format.ts";
 import {plan as planDeck} from "./slides-plan.ts";
 import {drawInBackground, fetchDeck, fetchDeckRev, pushDeck} from "./slides.ts";
+import type {Typing} from "./typing.ts";
 
 export type Kind = "doc" | "slides";
 
@@ -28,11 +29,13 @@ export interface Backend {
   fetchRev(id: string): Promise<string>;
   parse(text: string): any; // throws FormatError
   serialize(target: any): string;
-  plan(f: Fetched, target: any): {requests: unknown[]; warnings: string[]};
-  push(id: string, target: any, opts: {rev?: string; first: Fetched}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
+  plan(f: Fetched, target: any, opts?: {typing?: boolean}): {requests: unknown[]; warnings: string[]};
+  // `typing`, `onWrote` (the doc after each pass's writes) and `onSignal`
+  // (called on Ctrl+C/kill mid-push, before the process dies) are docs only.
+  push(id: string, target: any, opts: {rev?: string; first: Fetched; typing?: Typing; onWrote?: (f: Fetched) => void; onSignal?: () => Promise<void>}): Promise<{fetched: Fetched; requests: number; warnings: string[]}>;
   // One or the other: save the images now, or in a background process (see
-  // drawInBackground).
-  saveImages?(f: Fetched, dir: string): Promise<string[]>;
+  // drawInBackground). The object lets a backend also name slide pictures.
+  saveImages?(f: Fetched, dir: string): Promise<{images: string[]; slides?: string[]}>;
   saveImagesLater?(id: string, dir: string): boolean;
 }
 
@@ -47,15 +50,17 @@ const docs: Backend = {
   fetchRev,
   parse: parseDoc,
   serialize: serializeDoc,
-  plan: (f, target) => planDoc(f.remote, target),
+  plan: (f, target, opts) => planDoc(f.remote, target, opts),
   async push(id, target, opts) {
-    const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote});
+    const onWrote = opts.onWrote && ((r: PlanRemote) => opts.onWrote!({text: serializeDoc(r.doc), rev: r.doc.rev, remote: r}));
+    const onSignal = opts.onSignal && (async () => opts.onSignal!());
+    const res = await pushDoc(id, target, {rev: opts.rev, first: opts.first.remote, typing: opts.typing, onWrote, onSignal});
     // A new item the file ticks is created unticked; say so, as for any other.
     if (res.requests && (await markChecked(id, res.remote.doc)) && ticksDiffer(res.remote.doc, target)
       && !res.warnings.includes(CHECKS_WARNING)) res.warnings.push(CHECKS_WARNING);
     return {fetched: {text: serializeDoc(res.remote.doc), rev: res.remote.doc.rev, remote: res.remote}, requests: res.requests, warnings: res.warnings};
   },
-  saveImages: async (f, dir) => saveImages((f.remote as any).api, dir),
+  saveImages: async (f, dir) => ({images: await saveImages((f.remote as any).api, dir)}),
 };
 
 const slides: Backend = {

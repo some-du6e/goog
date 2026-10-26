@@ -15,6 +15,10 @@ batchUpdate, refetch and replan until a pass plans nothing (gdocs.ts) → base
 and three-way line merge (sync.ts) → the `goog edit` watcher (watch.ts).
 model.ts is the shape they share.
 
+`goog push --type` plans with `typing`: each pass keeps only the topmost
+paragraph edit that adds text (`slice` in gdocs-plan.ts), and `typeBatch` in
+gdocs.ts sends its insertText as paced chunks (typing.ts), one write each.
+
 Slides takes the same path through backend.ts, which sync and watch call for
 both kinds: slides-format.ts → slides-read.ts → slides-plan.ts → pushDeck in
 slides.ts. Shape and cell text reuses the doc format's paragraph parser.
