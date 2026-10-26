@@ -14,6 +14,8 @@ goog stop                  # stop background syncs (each pushes its last save fi
 goog push DOC_ID.goog      # one-shot push, no watcher (--dry-run shows the diff)
 goog push DOC_ID.goog --type   # same, but new text is typed in at human speed
 goog diff DOC_ID.goog      # what a push would change in the doc
+goog classroom             # Classroom work left to do, with your copy of each doc
+goog transcript VIDEO      # what a YouTube video says, with times
 goog help                  # everything else
 ```
 
@@ -28,7 +30,7 @@ goog help                  # everything else
   counts.
 - Exit codes: 0 ok, 1 error, 2 conflict, 3 timed out. `--json` works on
   `status`, `wait`, `push`, `pull`, `diff`, `check`, `ls`, `new`, `stop`, `skill`,
-  `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
+  `classroom`, `log` and `edit`. With `--json`, errors are printed as `{"ok":false,"error":…}`.
 - `goog log <file>` shows what the watcher did: pushes, pulls, conflicts,
   retries.
 - `goog push <file> --type` types new text in through the API, a few
@@ -148,6 +150,34 @@ layout's boxes) are tags without an id. Pasting a slide block or an object's
 line a second time duplicates it (except an `<object>`, such as a chart). The
 API can't change a slide's layout or a shape's type. `goog help slides` has the details.
 
+## Classroom
+
+`goog classroom` lists what's left to do across your active classes, most
+urgent first (due next, then missing, then undated): work you haven't turned in that was due in the last two weeks or
+later, or has no due date and was set this month. It says how much older
+unfinished work it left out. Each one shows your own copy
+of its files (the "make a copy for each student" kind). `--all` lists
+everything not turned in however old, `--done` adds finished work, a class name, id or link narrows it (`goog classroom science`), `--due 7`
+keeps work due in the next week (missing work included), and
+`--progress` reads each copy to say whether it's still blank or how many words
+you've added to the teacher's template.
+
+`goog classroom <assignment link>` shows one assignment's instructions, the
+teacher's files and yours, with how far along yours are (words, images and
+ticked boxes added to the template) and any YouTube videos the teacher's files
+link to. `goog edit`, `pull`, `cat` and `open` take an
+assignment link too and open your Doc or Slides copy in it. It's read-only:
+turning work in stays in Classroom.
+
+`goog transcript <youtube link or assignment>` prints what a video says, a line
+per 30 seconds with its time (`[15:35] …`), for worksheets that hang off a
+video. Given an assignment it does every video the assignment attaches or its
+files link to. It asks YouTube as its iOS app does (the
+web player's caption links need a token a script can't make), which takes
+about a second for an hour of video, and uses the uploader's captions when
+there are some. `--lang es` picks another language the video has, and
+`--from 0:00 --to 15:35` keeps just the part a worksheet covers.
+
 ## How it writes
 
 goog talks to the Docs API. Each push fetches the doc, diffs it against the
@@ -166,7 +196,9 @@ you fix them.
 `goog auth` sets up a token. Three options:
 
 - `goog auth import token.json`: reuse a refresh token another tool already
-  has (a google-auth `authorized_user` file). Its scopes need `drive`.
+  has (a google-auth `authorized_user` file). Its scopes need `drive`, and
+  `goog classroom` needs `classroom.courses.readonly` and
+  `classroom.coursework.me.readonly` (or `classroom.coursework.me`).
 - `goog auth script`: an Apps Script web app in your own Drive returns an
   OAuth token, and goog calls it through your signed-in Chrome (CDP on
   `127.0.0.1:9223`). No Google Cloud project needed, which matters for school

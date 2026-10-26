@@ -117,8 +117,12 @@ function explain(status: number, msg: string, url: string): string {
   const doc = id ? `doc ${id[1] ?? id[2]}` : "that file";
   if (status === 401) return `Google rejected the sign-in (${msg}); run goog auth to set it up again`;
   if (status === 403 && /has not been used|is disabled/.test(msg)) return `${msg}\n(the API isn't enabled for the token's Cloud project)`;
+  if (status === 403 && /insufficient|scope/i.test(msg) && url.includes("classroom.googleapis.com")) {
+    return `the token can't read Classroom (${msg}); goog classroom needs the classroom.courses.readonly and classroom.coursework.me.readonly scopes, so sign in again with goog auth`;
+  }
   if (status === 403 && /insufficient|scope/i.test(msg)) return `the token isn't allowed to do this (${msg}); run goog auth again with the drive scope`;
   if (status === 403) return `no permission for ${doc}: ${msg}. Check it's shared with the signed-in account (with edit access, to push).`;
+  if (status === 404 && url.includes("classroom.googleapis.com")) return "that class or assignment wasn't found; check the link, or goog classroom classes for your classes";
   if (status === 404) return `${doc} wasn't found. Check the id, or that it's shared with the signed-in account.`;
   if (status === 400 && /not supported for this document/i.test(msg)) {
     return `${doc} isn't a Google Doc (maybe an uploaded .docx or PDF). Open it in Docs and use File > Save as Google Docs, then use the new doc.`;

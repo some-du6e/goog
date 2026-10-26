@@ -25,6 +25,15 @@ test("help", () => {
   assert.match(goog("help", "format").stdout, /\.goog format/);
 });
 
+test("goog <cmd> --help shows that command's part of the help", () => {
+  const t = goog("transcript", "--help").stdout;
+  assert.match(t, /^  goog transcript/);
+  assert.match(t, /--from 2:00 --to 15:35/);
+  assert.doesNotMatch(t, /goog wait/);
+  assert.match(goog("classroom", "--help").stdout, /--progress/);
+  assert.match(goog("c++", "--help").stdout, /goog help format/); // not a regex
+});
+
 test("check: exit codes and --json", () => {
   assert.equal(goog("check", "ok.goog").status, 0);
   const bad = goog("check", "bad.goog", "--json");
