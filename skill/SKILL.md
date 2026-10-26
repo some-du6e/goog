@@ -11,7 +11,8 @@ description: Read and edit Google Docs and Slides from the shell with goog, as a
 1. **Pull.** In a fresh directory: `goog pull <doc url or id>`. It prints the
    file's path, then the paths of the doc's images (`<id>.files/<img id>.png`),
    then the whole file. Open every image the text refers to before writing
-   about it.
+   about it. For a deck, `goog pics <file>` waits for the slide pictures and
+   lists them; look at them too.
 2. **Edit** the file in one go (a Python replace script or `sed`), using the
    format below.
 3. **Push:** `goog push <file>`. Done when it prints `pushed`: the doc now
@@ -52,8 +53,9 @@ which objects can be added.
 
 A Slides file (`<!-- goog slides … -->`) is one `<slide>` block per slide,
 with one tag per object: `<shape>`, `<image>`, `<line x1 y1 x2 y2>`, `<table>`.
-Positions and sizes are points on a 720×405 slide. Pull also saves each slide
-as a picture (`<id>.files/slide-N.png`); look at those before moving
-anything, since where things sit is half the slide. Text inside a shape,
+Positions and sizes are points on a 720×405 slide. Pull and push also draw each
+slide as a picture (`<id>.files/slide-N.png`) in the background; `goog pics
+<file>` waits for them. Look at those before moving anything, since where
+things sit is half the slide. Text inside a shape,
 table cell or `<notes>` uses the format above. `goog help slides` covers
 adding, copying, grouping and reordering.
