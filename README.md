@@ -215,12 +215,11 @@ standard parameters always go in the query, and `--query key=value` puts any
 other one there (`--query supportsAllDrives=true`). There's no `-q`/`--jq`;
 pipe to `jq`. `-H 'Name: value'` adds a header, and `--silent` prints nothing
 on success. `--paginate` follows a GET's `nextPageToken` and joins the pages'
-lists, adding `nextPageToken` to a `fields=` that leaves it out. Reads are
-retried like every other command's. A write is only sent again when Google
-can't have run it (a 429 or rate limit, an expired sign-in, or a connection
-that never opened), so a create that failed with a 5xx or a dropped
-connection is never made twice. Google gets 10 minutes to start answering and
-10 more to finish, for slow exports and Apps Script runs, and a call that
+lists, adding `nextPageToken` to a `fields=` that leaves it out. A read is
+retried after a 5xx or a lost connection. A write is only sent again when
+Google can't have run it (a 429, a rate limit or an expired sign-in), so a
+create that failed with a 5xx or a lost connection is never made twice. A
+call gets 10 minutes, for slow exports and Apps Script runs, and one that
 runs out isn't retried. Errors print Google's error JSON and exit 1. Exports
 and media are written as they come; binary ones need a redirect.
 

@@ -50,7 +50,7 @@ export function apiUrl(path: string): URL {
 
 type Field = {key: string; value: unknown};
 
-export function keyValue(s: string, flag: string): {key: string; value: string} {
+function keyValue(s: string, flag: string): {key: string; value: string} {
   const eq = s.indexOf("=");
   if (eq < 1) throw new Error(`${flag} takes key=value (got "${s}")`);
   return {key: s.slice(0, eq), value: s.slice(eq + 1)};
@@ -218,6 +218,10 @@ export async function cmdApi(args: string[], help: string) {
 // Exports, big downloads and Apps Script runs can take minutes.
 export const limits = {timeoutMs: 600_000};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function retry(message: string, delayMs: number) {
+  io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`);
+  await sleep(delayMs);
+}
 
 // goog api's own request loop, apart from api() in google.ts: those calls are
 // goog's own, and safe to resend, but a write here could be anything, and sent
@@ -232,10 +236,6 @@ export async function request(method: string, url: string, body: unknown, extra:
     const headers = new Headers(extra);
     if (body !== undefined && !headers.has("content-type")) headers.set("Content-Type", "application/json");
     headers.set("Authorization", `Bearer ${await getToken()}`);
-    const retry = async (message: string, delayMs: number) => {
-      io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`);
-      await sleep(delayMs);
-    };
     // The limit covers the whole answer, body included.
     const signal = AbortSignal.timeout(limits.timeoutMs);
     let r: Response;
@@ -254,10 +254,19 @@ export async function request(method: string, url: string, body: unknown, extra:
     try {
       data = Buffer.from(await r.arrayBuffer());
     } catch (e: any) {
-      const why = e?.name === "TimeoutError" ? `the answer took over ${limits.timeoutMs / 1000}s` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`;
-      // An error is still handled on its status.
-      if (!r.ok) data = Buffer.alloc(0);
-      else throw new Error(write ? `${why}; Google did the write (HTTP ${r.status}), but its answer was lost` : why);
+      const timedOut = e?.name === "TimeoutError";
+      const why = timedOut ? `the answer took over ${limits.timeoutMs / 1000}s` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`;
+      if (r.ok && write) throw new Error(`${why}; Google did the write (HTTP ${r.status}), but its answer was lost`);
+      if (timedOut) throw new Error(r.ok ? why : `HTTP ${r.status}, and ${why}`);
+      if (r.ok) {
+        if (attempt < 3) {
+          await retry(why, 1000 * 2 ** attempt);
+          continue;
+        }
+        throw new Error(why);
+      }
+      // An error that broke off is still handled on its status.
+      data = Buffer.alloc(0);
     }
     const type = r.headers.get("content-type") ?? "";
     if (r.ok) return {status: r.status, type, data};
@@ -310,7 +319,7 @@ async function paginate(url: URL, call: () => Promise<Answer>, silent: boolean) 
 }
 
 // Prints an answer; throws for an error, after printing Google's JSON error.
-export function show(a: Answer, silent: boolean, method = "GET") {
+function show(a: Answer, silent: boolean, method = "GET") {
   const ok = a.status < 300;
   let parsed: any;
   if (isJson(a.type) || (!a.type && a.data.length)) {

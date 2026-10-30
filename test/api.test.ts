@@ -180,6 +180,7 @@ test("fields go in the query or the body by method", async () => {
     assert.equal(r.sent[0].url.search.slice(1), c.query, c.args.join(" "));
     assert.deepEqual(r.sent[0].body === undefined ? undefined : {...r.sent[0].body}, c.body, c.args.join(" "));
     assert.equal(r.sent[0].headers.get("authorization"), "Bearer offline-test");
+    assert.equal(r.sent[0].headers.get("content-type"), c.body === undefined ? null : "application/json");
     assert.equal(r.stdout, '{\n  "ok": 1\n}\n');
   }
 });
@@ -269,6 +270,14 @@ test("goog api retries a read but never resends a write Google may have run", as
   const limited = await run(["drive/v3/files/a/copy", "-X", "POST"], [json({error: {code: 429, message: "slow down"}}, 429, {"retry-after": "0"}), json({id: "b"})]);
   assert.equal(limited.error, undefined);
   assert.equal(limited.sent.length, 2);
+  // So is Drive's 403 rate limit.
+  const drive = await run(["drive/v3/files/a/copy", "-X", "POST"], [json({error: {code: 403, message: "slow", errors: [{reason: "userRateLimitExceeded"}]}}, 403, {"retry-after": "0"}), json({id: "b"})]);
+  assert.equal(drive.error, undefined);
+  assert.equal(drive.sent.length, 2);
+  // Seven tries, then the error.
+  const stuck = await run(["drive/v3/files/a"], Array.from({length: 7}, () => json({error: {code: 429, message: "slow down"}}, 429, {"retry-after": "0"})));
+  assert.equal(stuck.error, "HTTP 429: slow down");
+  assert.equal(stuck.sent.length, 7);
 });
 
 test("a lost connection retries a read, but a write is never sent twice", async () => {
@@ -278,9 +287,13 @@ test("a lost connection retries a read, but a write is never sent twice", async 
     assert.equal(write.error, `can't reach Google (${code}); the write may still have gone through`);
     assert.equal(write.sent.length, 1);
   }
-  const read = await run(["drive/v3/files/a"], [lost("ECONNRESET"), json({id: "a"})]);
+  // A read gets four tries.
+  const read = await run(["drive/v3/files/a"], [lost("ECONNRESET"), lost("ECONNRESET"), lost("ECONNRESET"), json({id: "a"})]);
   assert.equal(read.error, undefined);
-  assert.equal(read.sent.length, 2);
+  assert.equal(read.sent.length, 4);
+  const gone = await run(["drive/v3/files/a"], [lost("ECONNRESET"), lost("ECONNRESET"), lost("ECONNRESET"), lost("ECONNRESET")]);
+  assert.equal(gone.error, "can't reach Google (ECONNRESET); check the network connection");
+  assert.equal(gone.sent.length, 4);
 });
 
 // A body that errors partway through.
@@ -289,8 +302,11 @@ const broken = (status: number, headers: Record<string, string> = {}) => new Res
 }), {status, headers: {"content-type": "application/json", ...headers}});
 
 test("an answer that breaks off partway says so; an error that does is still retried", async () => {
-  const r = await run(["drive/v3/files/a"], [broken(200)]);
-  assert.equal(r.error, "the connection broke during the answer (UND_ERR_SOCKET)");
+  // A read is sent again.
+  const r = await run(["drive/v3/files/a"], [broken(200), json({id: "a"})]);
+  assert.equal(r.error, undefined);
+  assert.equal(r.sent.length, 2);
+  assert.match(r.stderr, /the connection broke during the answer \(UND_ERR_SOCKET\); retrying/);
   const write = await run(["drive/v3/files/a/copy", "-X", "POST"], [broken(200)]);
   assert.equal(write.error, "the connection broke during the answer (UND_ERR_SOCKET); Google did the write (HTTP 200), but its answer was lost");
   assert.equal(write.sent.length, 1);
@@ -329,6 +345,11 @@ test("a timeout covers the whole answer and isn't retried", async () => {
     // Headers in time, then a body that stalls.
     stub(async (signal) => new Response(new ReadableStream({start: (c) => signal.addEventListener("abort", () => c.error(signal.reason))}), {headers: {"content-type": "application/json"}}));
     await assert.rejects(request("GET", "https://drive.googleapis.com/x", undefined, {}), /the answer took over 0\.03s/);
+    assert.equal(calls, 1);
+    // Nor is an error whose body stalls.
+    stub(async (signal) => new Response(new ReadableStream({start: (c) => signal.addEventListener("abort", () => c.error(signal.reason))}), {status: 503, headers: {"content-type": "application/json"}}));
+    await assert.rejects(request("GET", "https://drive.googleapis.com/x", undefined, {}), /^Error: HTTP 503, and the answer took over 0\.03s$/);
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = real.fetch;
     limits.timeoutMs = real.ms;

@@ -64,10 +64,9 @@ Done means `npm test` and `npm run typecheck` both pass.
 - Chip inserts reply `{}`. `adoptNew` picks up their ids after the refetch.
 - `deleteTab` deletes the tab's child tabs too, so the planner never deletes a
   tab whose children the file keeps.
-
-- Standard parameters (`fields`, `alt`, …) in a JSON body are ignored: a
-  copy with `{"fields":"id"}` in its body answers with every default field.
-  They go in the query (`SYSTEM` in api-cmd.ts).
+- Standard parameters (`fields`, `alt`, …) in a JSON body are ignored, by
+  every Google API: a Drive copy with `{"fields":"id"}` in its body answers
+  with every default field. They go in the query (`SYSTEM` in api-cmd.ts).
 
 ## Slides API ground truth
 
