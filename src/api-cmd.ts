@@ -8,7 +8,8 @@
 
 import {readFileSync} from "node:fs";
 import {parseArgs} from "node:util";
-import {api, setRetryListener} from "./google.ts";
+import {forgetToken, getToken} from "./auth.ts";
+import {backoff} from "./google.ts";
 
 const API_USAGE = "goog api <path> [-X METHOD] [-f key=value] [-F key=value] [--query key=value] [--input FILE] [-H 'Name: value'] [--paginate] [--silent]";
 
@@ -209,14 +210,72 @@ export async function cmdApi(args: string[], help: string) {
   if (o.paginate && method !== "GET") throw new Error("--paginate only follows GETs");
 
   const headers = Object.fromEntries((o.header ?? []).map(parseHeader));
-  setRetryListener(({message, delayMs}) => io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`));
-  // Exports, big downloads and Apps Script runs can take minutes.
-  const call = () => api<Answer>(method, url.href, body, {raw: true, headers, timeoutMs: 600_000});
-  try {
-    if (!o.paginate) return show(await call(), !!o.silent, method);
-    return await paginate(url, call, !!o.silent);
-  } finally {
-    setRetryListener(undefined);
+  const call = () => request(method, url.href, body, headers);
+  if (!o.paginate) return show(await call(), !!o.silent, method);
+  return paginate(url, call, !!o.silent);
+}
+
+// Exports, big downloads and Apps Script runs can take minutes.
+export const limits = {timeoutMs: 600_000};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// goog api's own request loop, apart from api() in google.ts: those calls are
+// goog's own, and safe to resend, but a write here could be anything, and sent
+// twice it could make two of something. So a write is only sent again after a
+// 401 or a rate limit, which mean Google didn't run it. A GET is also retried
+// after a 5xx or a lost connection. Timeouts aren't retried. Every answer comes
+// back, errors included, for show() to print.
+export async function request(method: string, url: string, body: unknown, extra: Record<string, string>): Promise<Answer> {
+  const write = method !== "GET";
+  let refreshed = false;
+  for (let attempt = 0; ; attempt++) {
+    const headers = new Headers(extra);
+    if (body !== undefined && !headers.has("content-type")) headers.set("Content-Type", "application/json");
+    headers.set("Authorization", `Bearer ${await getToken()}`);
+    const retry = async (message: string, delayMs: number) => {
+      io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`);
+      await sleep(delayMs);
+    };
+    // The limit covers the whole answer, body included.
+    const signal = AbortSignal.timeout(limits.timeoutMs);
+    let r: Response;
+    let data: Buffer;
+    try {
+      r = await fetch(url, {method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal});
+    } catch (e: any) {
+      const timedOut = e?.name === "TimeoutError";
+      const why = timedOut ? `no answer in ${limits.timeoutMs / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
+      if (!write && !timedOut && attempt < 3) {
+        await retry(`can't reach Google (${why})`, 1000 * 2 ** attempt);
+        continue;
+      }
+      throw new Error(`can't reach Google (${why}); ${write ? "the write may still have gone through" : "check the network connection"}`);
+    }
+    try {
+      data = Buffer.from(await r.arrayBuffer());
+    } catch (e: any) {
+      const why = e?.name === "TimeoutError" ? `the answer took over ${limits.timeoutMs / 1000}s` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`;
+      // An error is still handled on its status.
+      if (!r.ok) data = Buffer.alloc(0);
+      else throw new Error(write ? `${why}; Google did the write (HTTP ${r.status}), but its answer was lost` : why);
+    }
+    const type = r.headers.get("content-type") ?? "";
+    if (r.ok) return {status: r.status, type, data};
+    let j: any = {};
+    try {
+      j = JSON.parse(data.toString("utf8")) ?? {};
+    } catch {}
+    const reason: string = j.error?.errors?.[0]?.reason ?? j.error?.details?.find((d: any) => d.reason)?.reason ?? "";
+    if (r.status === 401 && !refreshed) {
+      refreshed = true;
+      forgetToken();
+      continue;
+    }
+    if ((r.status === 429 || /rate ?limit/i.test(reason) || (!write && r.status >= 500)) && attempt < 6) {
+      await retry(r.status === 429 ? "Google rate limit" : `Google error ${r.status}: ${j.error?.message ?? r.statusText}`, backoff(attempt, r.headers.get("retry-after"), r.status));
+      continue;
+    }
+    return {status: r.status, type, data};
   }
 }
 
@@ -277,7 +336,7 @@ export function show(a: Answer, silent: boolean, method = "GET") {
     ?? "";
   const hint = a.status === 401 ? "; run goog auth to sign in again"
     : a.status === 403 && /scope/i.test(msg) ? "; the token's scopes don't cover this API (goog auth status)"
-    // A write isn't resent after a 5xx (see api()), but it may have run.
+    // A write isn't resent after a 5xx (see request()), but it may have run.
     : a.status >= 500 && method !== "GET" ? "; the write may still have gone through"
     : (a.status === 404 || a.status === 405) && /html/i.test(a.type) ? "; no such API path (check the service, version and method name)"
     : "";

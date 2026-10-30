@@ -28,90 +28,45 @@ export function setRetryListener(fn: RetryListener | undefined) {
 
 const TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 7;
-// Connection errors that mean the request never left this machine: no
-// address, no route, no connection, or a certificate refused before sending.
-const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"]);
-const unsentError = (code: unknown) => typeof code === "string" && (NOT_SENT.has(code) || /CERT|^ERR_TLS_/.test(code));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function backoff(attempt: number, retryAfter: string | null, status: number): number {
+export function backoff(attempt: number, retryAfter: string | null, status: number): number {
   const s = Number(retryAfter);
   if (retryAfter && Number.isFinite(s)) return Math.min(s * 1000, 65_000);
   const base = status === 429 ? 4000 : 1000; // quota windows are a minute long
   return Math.min(base * 2 ** attempt, 32_000) * (0.75 + Math.random() * 0.5);
 }
 
-// opts.text returns the body as a string, opts.bytes as {status, type, data}.
-// opts.raw returns that for every answer, errors included, once retrying is
-// over (for goog api, which shows Google's own error); a write it sends isn't
-// sent again once Google may have run it, and a timeout isn't retried.
-// opts.headers adds headers; Authorization is always goog's. Google gets
-// opts.timeoutMs (a minute) to start answering, and as long again to finish.
-export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean; raw?: boolean; headers?: Record<string, string>; timeoutMs?: number} = {}): Promise<T> {
-  const ms = opts.timeoutMs ?? TIMEOUT_MS;
-  const once = opts.raw && method !== "GET";
+// opts.text returns the body as a string, opts.bytes as {type, data}.
+export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean} = {}): Promise<T> {
   let refreshed = false;
-  let maybeSent = false; // a write that may have landed on an earlier attempt
   for (let attempt = 0; ; attempt++) {
     const token = await getToken();
-    const headers = new Headers(opts.headers);
-    if (body !== undefined && !headers.has("content-type")) headers.set("Content-Type", "application/json");
-    headers.set("Authorization", `Bearer ${token}`);
-    const ac = new AbortController();
-    const timeout = (limit: number) => setTimeout(() => ac.abort(new DOMException(`no answer in ${limit / 1000}s`, "TimeoutError")), limit).unref();
-    let timer = timeout(ms);
     let r: Response;
     try {
       r = await fetch(url, {
         method,
-        headers,
+        headers: {Authorization: `Bearer ${token}`, ...(body === undefined ? {} : {"Content-Type": "application/json"})},
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: ac.signal,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (e: any) {
-      clearTimeout(timer);
-      const timedOut = e?.name === "TimeoutError";
-      const why = timedOut ? `no answer in ${ms / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
-      // A write that timed out may have landed; don't send it twice. Nor any
-      // goog api write, unless the connection was never made.
-      const unsent = unsentError(e?.cause?.code);
-      if (method !== "GET" && !unsent) maybeSent = true;
-      if (attempt < 3 && (method === "GET" || !timedOut) && !(opts.raw && timedOut) && (!once || unsent)) {
+      const why = e?.name === "TimeoutError" ? `no answer in ${TIMEOUT_MS / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
+      // A write that timed out may have landed; don't send it twice.
+      if (attempt < 3 && (method === "GET" || e?.name !== "TimeoutError")) {
         const delayMs = 1000 * 2 ** attempt;
         onRetry?.({status: 0, message: `can't reach Google (${why})`, delayMs, attempt});
         await sleep(delayMs);
         continue;
       }
-      // Rerunning a write that may have landed could do it twice; say so.
-      throw new ApiError(0, `can't reach Google (${why}); ${maybeSent ? "the write may still have gone through" : "check the network connection"}`);
+      throw new ApiError(0, `can't reach Google (${why}); check the network connection`);
     }
-    clearTimeout(timer);
-    const bytes = async (limit: number) => {
-      timer = timeout(limit);
-      try {
-        return Buffer.from(await r.arrayBuffer());
-      } catch (e: any) {
-        const done = r.ok && method !== "GET" ? `; Google did the write (HTTP ${r.status}), but its answer was lost` : "";
-        throw new ApiError(0, (e?.name === "TimeoutError" ? `the answer took over ${limit / 1000}s to come in` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`) + done);
-      } finally {
-        clearTimeout(timer);
-      }
-    };
     if (r.ok) {
-      const data = await bytes(ms);
-      if (opts.raw || opts.bytes) return {status: r.status, type: r.headers.get("content-type") ?? "", data} as T;
       if (r.status === 204) return null as T;
-      // TextDecoder drops a BOM, as r.text() and r.json() do.
-      const text = new TextDecoder().decode(data);
-      return (opts.text ? text : JSON.parse(text)) as T;
+      if (opts.bytes) return {type: r.headers.get("content-type") ?? "", data: Buffer.from(await r.arrayBuffer())} as T;
+      return (opts.text ? await r.text() : await r.json()) as T;
     }
-    // Error bodies are small, so a minute is plenty; one that breaks off is
-    // still retried on its status.
-    const data = await bytes(Math.min(ms, TIMEOUT_MS)).catch(() => Buffer.alloc(0));
-    let j: any = {};
-    try {
-      j = JSON.parse(data.toString("utf8")) ?? {};
-    } catch {}
+    const j: any = await r.json().catch(() => ({}));
     const msg: string = j.error?.message ?? r.statusText;
     const reason: string | undefined = j.error?.errors?.[0]?.reason ?? j.error?.details?.find((d: any) => d.reason)?.reason;
     if (r.status === 401 && !refreshed) {
@@ -119,14 +74,12 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       forgetToken();
       continue;
     }
-    // A 5xx may come after the work was done; 429 and rate limits mean it wasn't.
-    if ((r.status === 429 || (r.status >= 500 && !once) || /rate ?limit/i.test(reason ?? "")) && attempt < MAX_ATTEMPTS - 1) {
+    if ((r.status === 429 || r.status >= 500 || /rate ?limit/i.test(reason ?? "")) && attempt < MAX_ATTEMPTS - 1) {
       const delayMs = backoff(attempt, r.headers.get("retry-after"), r.status);
       onRetry?.({status: r.status, message: r.status === 429 ? "Google rate limit" : `Google error ${r.status}: ${msg}`, delayMs, attempt});
       await sleep(delayMs);
       continue;
     }
-    if (opts.raw) return {status: r.status, type: r.headers.get("content-type") ?? "", data} as T;
     if (r.status === 404 && url.startsWith(DOCS)) {
       const other = await whatIs(url);
       if (other) throw new ApiError(404, other, reason);

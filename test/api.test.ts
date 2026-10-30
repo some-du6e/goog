@@ -12,7 +12,7 @@ const tmp = mkdtempSync(join(tmpdir(), "goog-api-test-"));
 process.env.GOOG_CACHE_DIR = join(tmp, "cache");
 process.env.GOOG_CONFIG_DIR = join(tmp, "config");
 process.env.GOOG_TOKEN = "offline-test";
-const {apiUrl, cmdApi, fieldsBody, io, mergePages, parseFields, parseHeader} = await import("../src/api-cmd.ts");
+const {apiUrl, cmdApi, fieldsBody, io, limits, mergePages, parseFields, parseHeader, request} = await import("../src/api-cmd.ts");
 
 test("paths map to the service's host", () => {
   assert.equal(apiUrl("docs/v1/documents/abc").href, "https://docs.googleapis.com/v1/documents/abc");
@@ -271,27 +271,12 @@ test("goog api retries a read but never resends a write Google may have run", as
   assert.equal(limited.sent.length, 2);
 });
 
-test("a write is resent after a connection that never opened, but not after one that dropped", async () => {
+test("a lost connection retries a read, but a write is never sent twice", async () => {
   const lost = (code: string) => Object.assign(new TypeError("fetch failed"), {cause: {code}});
-  const reset = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNRESET")]);
-  assert.equal(reset.error, "can't reach Google (ECONNRESET); the write may still have gone through");
-  assert.equal(reset.sent.length, 1);
-  for (const code of ["ECONNREFUSED", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT", "SELF_SIGNED_CERT_IN_CHAIN"]) {
-    const refused = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost(code), json({id: "b"})]);
-    assert.equal(refused.error, undefined, code);
-    assert.equal(refused.sent.length, 2, code);
-  }
-  // The message remembers an earlier attempt that may have landed.
-  const {api} = await import("../src/google.ts");
-  const real = globalThis.fetch;
-  const errors = [lost("ECONNRESET"), lost("ECONNREFUSED"), lost("ECONNREFUSED"), lost("ECONNREFUSED")];
-  globalThis.fetch = (async () => {
-    throw errors.shift();
-  }) as typeof fetch;
-  try {
-    await assert.rejects(api("POST", "https://docs.googleapis.com/v1/documents", {}), /\(ECONNREFUSED\); the write may still have gone through/);
-  } finally {
-    globalThis.fetch = real;
+  for (const code of ["ECONNRESET", "ECONNREFUSED"]) {
+    const write = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost(code)]);
+    assert.equal(write.error, `can't reach Google (${code}); the write may still have gone through`);
+    assert.equal(write.sent.length, 1);
   }
   const read = await run(["drive/v3/files/a"], [lost("ECONNRESET"), json({id: "a"})]);
   assert.equal(read.error, undefined);
@@ -309,18 +294,9 @@ test("an answer that breaks off partway says so; an error that does is still ret
   const write = await run(["drive/v3/files/a/copy", "-X", "POST"], [broken(200)]);
   assert.equal(write.error, "the connection broke during the answer (UND_ERR_SOCKET); Google did the write (HTTP 200), but its answer was lost");
   assert.equal(write.sent.length, 1);
-  // Every command's api() call, not just goog api's.
-  const {api} = await import("../src/google.ts");
-  const real = globalThis.fetch;
-  const answers = [broken(503, {"retry-after": "0"}), json({ok: true})];
-  let calls = 0;
-  globalThis.fetch = (async () => (calls++, answers.shift()!)) as typeof fetch;
-  try {
-    assert.deepEqual(await api("GET", "https://docs.googleapis.com/v1/documents/x"), {ok: true});
-    assert.equal(calls, 2);
-  } finally {
-    globalThis.fetch = real;
-  }
+  const busy = await run(["drive/v3/files/a"], [broken(503, {"retry-after": "0"}), json({ok: true})]);
+  assert.equal(busy.error, undefined);
+  assert.equal(busy.sent.length, 2);
 });
 
 test("an expired sign-in is refreshed once, even for a write", async () => {
@@ -333,32 +309,29 @@ test("an expired sign-in is refreshed once, even for a write", async () => {
   assert.equal(again.sent.length, 2);
 });
 
-test("timeouts: one for the first byte and one for the rest, and goog api doesn't retry them", async () => {
-  const {api, ApiError} = await import("../src/google.ts");
-  const real = globalThis.fetch;
+test("a timeout covers the whole answer and isn't retried", async () => {
+  const real = {fetch: globalThis.fetch, ms: limits.timeoutMs, err: io.err};
   let calls = 0;
   const stub = (answer: (signal: AbortSignal) => Promise<Response>) => {
     calls = 0;
     globalThis.fetch = ((_u: any, init: any) => (calls++, answer(init.signal))) as typeof fetch;
   };
   const never = (signal: AbortSignal) => new Promise<Response>((_, no) => signal.addEventListener("abort", () => no(signal.reason)));
+  limits.timeoutMs = 30;
+  io.err = () => {};
   try {
     stub(never);
-    await assert.rejects(api("POST", "https://drive.googleapis.com/x", {}, {raw: true, timeoutMs: 30}), (e: any) => e instanceof ApiError && /no answer in 0\.03s\); the write may still have gone through/.test(e.message));
+    await assert.rejects(request("POST", "https://drive.googleapis.com/x", {}, {}), /no answer in 0\.03s\); the write may still have gone through/);
     assert.equal(calls, 1);
     stub(never);
-    await assert.rejects(api("GET", "https://drive.googleapis.com/x", undefined, {raw: true, timeoutMs: 30}), /no answer in 0\.03s\); check the network/);
+    await assert.rejects(request("GET", "https://drive.googleapis.com/x", undefined, {}), /no answer in 0\.03s\); check the network/);
     assert.equal(calls, 1);
     // Headers in time, then a body that stalls.
     stub(async (signal) => new Response(new ReadableStream({start: (c) => signal.addEventListener("abort", () => c.error(signal.reason))}), {headers: {"content-type": "application/json"}}));
-    await assert.rejects(api("GET", "https://drive.googleapis.com/x", undefined, {timeoutMs: 30}), (e: any) => e instanceof ApiError && e.status === 0 && /took over 0.03s to come in/.test(e.message));
-    // A slow start inside the limit is fine.
-    stub(async () => (await new Promise((r) => setTimeout(r, 20)), json({ok: 1})));
-    assert.deepEqual(await api("GET", "https://drive.googleapis.com/x", undefined, {timeoutMs: 60}), {ok: 1});
-    // A BOM is dropped, as r.text() did.
-    stub(async () => new Response("\ufeffhi", {headers: {"content-type": "text/plain"}}));
-    assert.equal(await api("GET", "https://drive.googleapis.com/x", undefined, {text: true}), "hi");
+    await assert.rejects(request("GET", "https://drive.googleapis.com/x", undefined, {}), /the answer took over 0\.03s/);
   } finally {
-    globalThis.fetch = real;
+    globalThis.fetch = real.fetch;
+    limits.timeoutMs = real.ms;
+    io.err = real.err;
   }
 });
