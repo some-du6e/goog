@@ -47,7 +47,7 @@ test("sign-in ignores replies without its state, and sends the PKCE verifier", {
 // Plays a broker that answers `reply(method)` (a body, or a body and status),
 // as seen after following redirects to `landed`, and returns the methods it
 // was asked with.
-async function withBroker(landed: string, reply: (method: string) => string | [string, number], fn: () => Promise<unknown>): Promise<string[]> {
+async function withBroker(landed: string, reply: (method: string) => BodyInit | [BodyInit, number], fn: () => Promise<unknown>): Promise<string[]> {
   const realFetch = globalThis.fetch;
   const asked: string[] = [];
   // Nothing listens here, so a fallback to Chrome fails with "no Chrome at".
@@ -131,6 +131,17 @@ test("a failed request's error quotes neither the URL nor a call log's cookies",
   await withBroker(echo, () => {
     throw new Error(leaky);
   }, () => assert.rejects(getToken(), (e: any) => /Timeout exceeded/.test(e.message) && !/SECRET|sessioncookie|user_content_key/.test(e.message)));
+});
+
+test("a reply that breaks off partway says it was the broker", async () => {
+  const cut = () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('{"tok'));
+        c.error(Object.assign(new TypeError("terminated"), {cause: {code: "ECONNRESET"}}));
+      },
+    });
+  await withBroker(echo, cut, () => assert.rejects(getToken(), /couldn't reach the Apps Script broker: ECONNRESET/));
 });
 
 test("the broker's URL stays out of goog auth status, and its token out of a plain visit", () => {
