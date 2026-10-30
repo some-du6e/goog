@@ -177,10 +177,12 @@ async function hidingUrl<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e: any) {
-    const msg = String(e?.message ?? e).split(/\n\s*Call log:/)[0];
-    throw new Error(msg.replace(/https:\/\/script\.google(usercontent)?\.com\/\S*/g, "<broker URL>"));
+    throw new Error(hideBrokerUrls(String(e?.message ?? e).split(/\n\s*Call log:/)[0]));
   }
 }
+
+// Also run on every error goog prints, for a URL pasted into the wrong command.
+export const hideBrokerUrls = (msg: string) => msg.replace(/https?:\/\/script\.google(usercontent)?\.com\/[^\s'"]*/g, "<broker URL>");
 
 function json(text: string): any {
   try {

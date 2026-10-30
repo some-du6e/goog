@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {hideBrokerUrls} from "../src/auth.ts";
 import {main} from "../src/cli.ts";
 
 // Output piped into `head` and the like: once the reader is gone, stop quietly.
@@ -8,7 +9,7 @@ process.stdout.on("error", (e: any) => {
 });
 
 main(process.argv.slice(2)).catch((e) => {
-  const msg = e?.message ?? String(e);
+  const msg = hideBrokerUrls(e?.message ?? String(e));
   if (process.argv.includes("--json")) process.stdout.write(JSON.stringify({ok: false, error: msg, line: e?.line}) + "\n");
   console.error(`goog: ${msg}`);
   process.exit(1);

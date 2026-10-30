@@ -170,12 +170,19 @@ test("auth script: refuses what isn't an /exec URL without quoting it or saving 
     goog("auth", "script", secret),
     goog("auth", "script", "https://example.com/x"),
     goog("auth", "script", "http://script.google.com/macros/s/AKfycbSECRET/exec"), // not https
-    goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec"), // "script" left out
     goog("auth", "script.google.com/macros/s/AKfycbSECRET/exec"),
     spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "not a url\n"}),
   ]) {
     assert.equal(r.status, 1);
     assert.doesNotMatch(r.stderr, /SECRET/);
+  }
+  // "script" left out: still the URL check's error.
+  assert.match(goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec").stderr, /isn't an Apps Script web app URL/);
+  // Pasted into the wrong command, the URL still isn't echoed back.
+  const url = "https://script.google.com/macros/s/AKfycbSECRET/exec";
+  for (const r of [goog("auth", "import", url), goog("cat", url), goog(url), goog("cat", url, "--json")]) {
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stderr + r.stdout, /SECRET/);
   }
   // Read from stdin: the error is the URL check's, not the "pass the URL" one.
   const piped = spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "https://example.com/x\n"});
