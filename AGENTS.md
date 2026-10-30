@@ -48,7 +48,8 @@ Done means `npm test` and `npm run typecheck` both pass.
 - `node test/plan-live.ts [regex]` runs test/plan-scenarios.ts against real
   docs. Live runs use up the shared per-minute write quota, so reuse one doc
   for ad-hoc probes.
-- Delete throwaway docs for good with `DELETE drive/v3/files/<id>`, the way
+- Delete throwaway docs for good with `DELETE drive/v3/files/<id>`
+  (`goog api drive/v3/files/<id> -X DELETE`), the way
   plan-live.ts does. Trashing them fills the user's Drive trash; one run left
   619 docs there.
 
@@ -107,7 +108,8 @@ Observed live; the code depends on each:
   they come back several times faster.
 - The imported token has no presentations scope; its drive scope covers the
   Slides API.
-- Test against a Drive copy of a deck (`POST drive/v3/files/<id>/copy`) and
+- Test against a Drive copy of a deck (`POST drive/v3/files/<id>/copy`, or
+  `goog api drive/v3/files/<id>/copy -X POST -f fields=id`) and
   delete it for good afterwards, as with docs.
 
 ## The user's docs and auth
