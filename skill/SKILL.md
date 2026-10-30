@@ -44,6 +44,12 @@ while `goog edit` watches the file. Typos are typed in then backspaced out
 every few sentences — that's on purpose, so revision-history detectors see a
 human editing pattern instead of a clean paste.
 
+For anything the file can't express (comments, sharing, revisions, Sheets,
+exports), `goog api <service>/<version>/…` calls the API directly, signed in,
+like `gh api`: `goog api drive/v3/files/<id>/revisions`,
+`goog api drive/v3/files/<id>/export -f mimeType=text/plain`. It's a GET
+unless you pass `-X` or `--input body.json`. `goog api --help` has the flags.
+
 ## Format
 
 The file mirrors the doc: whatever you leave as pulled stays exactly as it is,

@@ -38,7 +38,9 @@ function backoff(attempt: number, retryAfter: string | null, status: number): nu
 }
 
 // opts.text returns the body as a string, opts.bytes as {type, data}.
-export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean} = {}): Promise<T> {
+// opts.raw returns {status, type, data} for every answer, errors included,
+// once retrying is over (for goog api, which shows Google's own error).
+export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean; raw?: boolean; headers?: Record<string, string>} = {}): Promise<T> {
   let refreshed = false;
   for (let attempt = 0; ; attempt++) {
     const token = await getToken();
@@ -46,7 +48,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
     try {
       r = await fetch(url, {
         method,
-        headers: {Authorization: `Bearer ${token}`, ...(body === undefined ? {} : {"Content-Type": "application/json"})},
+        headers: {...(body === undefined ? {} : {"Content-Type": "application/json"}), ...opts.headers, Authorization: `Bearer ${token}`},
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
@@ -61,12 +63,17 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       }
       throw new ApiError(0, `can't reach Google (${why}); check the network connection`);
     }
+    if (opts.raw && r.ok) return {status: r.status, type: r.headers.get("content-type") ?? "", data: Buffer.from(await r.arrayBuffer())} as T;
     if (r.ok) {
       if (r.status === 204) return null as T;
       if (opts.bytes) return {type: r.headers.get("content-type") ?? "", data: Buffer.from(await r.arrayBuffer())} as T;
       return (opts.text ? await r.text() : await r.json()) as T;
     }
-    const j: any = await r.json().catch(() => ({}));
+    const data = Buffer.from(await r.arrayBuffer());
+    let j: any = {};
+    try {
+      j = JSON.parse(data.toString("utf8")) ?? {};
+    } catch {}
     const msg: string = j.error?.message ?? r.statusText;
     const reason: string | undefined = j.error?.errors?.[0]?.reason ?? j.error?.details?.find((d: any) => d.reason)?.reason;
     if (r.status === 401 && !refreshed) {
@@ -80,6 +87,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       await sleep(delayMs);
       continue;
     }
+    if (opts.raw) return {status: r.status, type: r.headers.get("content-type") ?? "", data} as T;
     if (r.status === 404 && url.startsWith(DOCS)) {
       const other = await whatIs(url);
       if (other) throw new ApiError(404, other, reason);

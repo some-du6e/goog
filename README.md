@@ -186,6 +186,35 @@ about a second for an hour of video, and uses the uploader's captions when
 there are some. `--lang es` picks another language the video has, and
 `--from 0:00 --to 15:35` keeps just the part a worksheet covers.
 
+## Any API call
+
+`goog api` calls any Google REST API with goog's sign-in and prints the JSON
+answer, like `gh api`:
+
+```sh
+goog api docs/v1/documents/<id> -f fields=title
+goog api drive/v3/files -f q="name contains 'essay'" -f 'fields=files(id,name)' --paginate
+goog api drive/v3/files/<id>/copy -X POST -f name="scratch copy" -f fields=id
+echo '{"requests":[…]}' | goog api docs/v1/documents/<id>:batchUpdate --input -
+goog api drive/v3/files/<id>/export -f mimeType=application/pdf > doc.pdf
+goog api drive/v3/files/<id> -X DELETE
+```
+
+The path is `<service>/<version>/…` (`docs`, `slides`, `drive`, `classroom`,
+`sheets`, …), or a full URL. The token only goes to `https://*.googleapis.com`.
+It's a GET unless there's an `--input` body. `-f key=value` is a string and
+`-F` keeps `true`, `false`, `null` and numbers typed and reads `@file`. Both
+are query parameters on GET and DELETE, and body fields (`a[b]=v` nests,
+`a[]=v` lists) otherwise. Unlike `gh api`, fields don't turn a GET into a
+POST: Google's GETs take their options in the query, and a list that quietly
+became a create would make files. `fields=` and Google's other standard
+parameters always go in the query, and `-q key=value` puts any other one
+there (`-q supportsAllDrives=true`). `--paginate` follows `nextPageToken` and
+joins the pages' lists, adding `nextPageToken` to a `fields=` that leaves it
+out. Retries and rate-limit waits are the same as every other command's.
+Errors print Google's error JSON and exit 1. Exports and media are written as
+they come; binary ones need a redirect.
+
 ## How it writes
 
 goog talks to the Docs API. Each push fetches the doc, diffs it against the
