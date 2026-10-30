@@ -1,8 +1,9 @@
 // Finds an OAuth access token for Google's APIs. In order:
 //  1. $GOOG_TOKEN
 //  2. a refresh token from `goog auth client` (your own Google Cloud OAuth client)
-//  3. an Apps Script web app you own (`goog auth script`), called through the
-//     signed-in Chrome so it runs as you. No Cloud project needed.
+//  3. an Apps Script web app you own (`goog auth script`). No Cloud project
+//     needed. Deployed for "Anyone", a plain fetch gets the token; deployed
+//     for "Only myself", it goes through the signed-in Chrome.
 
 import {createHash, randomBytes} from "node:crypto";
 import {rmSync} from "node:fs";
@@ -16,9 +17,50 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/presentations",
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive",
-  // goog classroom: your classes, and their work with your submissions.
+  // Gmail: read, draft, send and label mail (not delete it for good).
+  "https://www.googleapis.com/auth/gmail.modify",
+  // Forms: only reaches the API from goog auth client or an imported token.
+  // Apps Script has no Forms advanced service, so a broker's token gets 403.
+  "https://www.googleapis.com/auth/forms.body",
+  "https://www.googleapis.com/auth/forms.responses.readonly",
+  // The rest of the account, asked for up front so a broker never needs
+  // redeploying.
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/tasks",
+  "https://www.googleapis.com/auth/contacts",
+  "https://www.googleapis.com/auth/youtube",
+  "https://www.googleapis.com/auth/yt-analytics.readonly",
+  "https://www.googleapis.com/auth/drive.activity.readonly",
+  "https://www.googleapis.com/auth/chat.spaces",
+  "https://www.googleapis.com/auth/chat.messages",
+  "https://www.googleapis.com/auth/chat.memberships",
+  // goog classroom reads your classes, their work and your submissions. It
+  // asks for every Classroom scope (the list in Classroom's discovery doc),
+  // so a broker deployed today never needs redeploying when goog does more.
+  "https://www.googleapis.com/auth/classroom.addons.student",
+  "https://www.googleapis.com/auth/classroom.addons.teacher",
+  "https://www.googleapis.com/auth/classroom.announcements",
+  "https://www.googleapis.com/auth/classroom.announcements.readonly",
+  "https://www.googleapis.com/auth/classroom.courses",
   "https://www.googleapis.com/auth/classroom.courses.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.me",
   "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.students",
+  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+  "https://www.googleapis.com/auth/classroom.courseworkmaterials",
+  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
+  "https://www.googleapis.com/auth/classroom.guardianlinks.me.readonly",
+  "https://www.googleapis.com/auth/classroom.guardianlinks.students",
+  "https://www.googleapis.com/auth/classroom.guardianlinks.students.readonly",
+  "https://www.googleapis.com/auth/classroom.profile.emails",
+  "https://www.googleapis.com/auth/classroom.profile.photos",
+  "https://www.googleapis.com/auth/classroom.push-notifications",
+  "https://www.googleapis.com/auth/classroom.rosters",
+  "https://www.googleapis.com/auth/classroom.rosters.readonly",
+  "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly",
+  "https://www.googleapis.com/auth/classroom.student-submissions.students.readonly",
+  "https://www.googleapis.com/auth/classroom.topics",
+  "https://www.googleapis.com/auth/classroom.topics.readonly",
 ];
 
 const tokenCache = join(CACHE_DIR, "token.json");
@@ -65,21 +107,43 @@ async function fetchToken(): Promise<Cached> {
     return {token: j.access_token, expires: Date.now() + j.expires_in * 1000, source: "client"};
   }
   if (cfg.broker) {
-    const j: any = await withBrowser(async (ctx) => {
-      const r = await ctx.request.get(cfg.broker!, {timeout: 30000});
-      const text = await r.text();
-      if (r.url().includes("accounts.google.com")) throw new Error("Chrome isn't signed in to Google; sign in there first");
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw new Error(`the Apps Script broker didn't return a token (HTTP ${r.status()}); open ${cfg.broker} in Chrome to check it`);
+    const j: any = (await fromBroker(cfg.broker)) ?? (await withBrowser(async (ctx) => {
+      for (const method of ["post", "get"] as const) {
+        const r = await ctx.request[method](cfg.broker!, {timeout: 30000});
+        if (r.url().includes("accounts.google.com")) throw new Error("Chrome isn't signed in to Google; sign in there first");
+        const reply = json(await r.text());
+        if (reply) return reply;
       }
-    });
+      throw new Error(`the Apps Script broker didn't return a token; open ${cfg.broker} in Chrome to check it`);
+    }));
     // Only the field names: a reply without `token` may still hold one.
     if (!j.token) throw new Error(`the Apps Script broker returned an error: ${typeof j.error === "string" ? j.error : `no token (fields: ${Object.keys(j ?? {}).join(", ") || "none"})`}`);
     return {token: j.token, expires: Date.now() + (await lifetime(j.token)), source: "script"};
   }
-  throw new Error("goog isn't signed in to Google. Run `goog auth` to set it up.");
+  throw new Error("goog isn't signed in to Google. Run `goog auth script` and show the user the steps it prints.");
+}
+
+// A broker deployed for "Anyone" answers without cookies. One deployed for
+// "Only myself" sends a cookieless request to a sign-in page, so this returns
+// null and the caller asks again through Chrome. The token comes from POST,
+// which crawlers and link previews never send; brokers deployed before that
+// only answer GET.
+async function fromBroker(url: string): Promise<any> {
+  for (const method of ["POST", "GET"]) {
+    const r = await fetch(url, {method, signal: AbortSignal.timeout(30_000)});
+    if (new URL(r.url).hostname === "accounts.google.com") return null;
+    const reply = json(await r.text());
+    if (reply) return reply;
+  }
+  return null;
+}
+
+function json(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // Apps Script hands out its cached token, which may be most of the way to
@@ -99,7 +163,7 @@ export function authStatus(): string {
   const saved = readJson<{refresh_token?: string} | null>(refreshPath, null);
   if (process.env.GOOG_TOKEN) return "using $GOOG_TOKEN";
   if (cfg.client && saved?.refresh_token) return `using your OAuth client ${cfg.client.client_id.split("-")[0]}…`;
-  if (cfg.broker) return `using the Apps Script broker through Chrome (${cfg.broker.slice(0, 60)}…)`;
+  if (cfg.broker) return `using the Apps Script broker (${cfg.broker.slice(0, 60)}…)`;
   return "not set up";
 }
 
@@ -172,11 +236,23 @@ export async function loginWithClient(client: {client_id: string; client_secret:
   forgetToken();
 }
 
+// A Sheet whose bound script is BROKER_SOURCE with BROKER_MANIFEST (time zone
+// UTC), owned by a public account so copying it shows no one's personal
+// email. Apps Script projects have no /copy link and Sheets do, and copying
+// the Sheet copies its script. The text fragment highlights the button.
+export const BROKER_TEMPLATE = "https://docs.google.com/spreadsheets/d/1HCVN1eXlLpQoiQE9KkpwH-uZdzoAKdKJlpUGWh_O5JY/copy#:~:text=goog%20setup%3F-,Make%20a%20copy,-View%20Apps%20Script";
+
 // The Apps Script that `goog auth script` asks you to deploy.
 // Scopes come from the manifest; the advanced services there switch on the
-// Docs, Slides, Sheets, Drive and Classroom APIs for the script's Cloud project, which the
-// token needs.
+// APIs goog's token may call (Docs, Slides, Drive, Classroom, Gmail, Chat and
+// the rest) for the script's Cloud project, which the token needs.
+// The token is only in POST replies: a browser, crawler or link preview opening
+// the URL gets the doGet text.
 export const BROKER_SOURCE = `function doGet() {
+  return ContentService.createTextOutput("this is your goog sign-in link. send it to your agent and keep it private, it works like a password");
+}
+
+function doPost() {
   return ContentService.createTextOutput(JSON.stringify({token: ScriptApp.getOAuthToken()}))
     .setMimeType(ContentService.MimeType.JSON);
 }`;
@@ -185,8 +261,8 @@ export const BROKER_MANIFEST = {
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   exceptionLogging: "STACKDRIVER",
   runtimeVersion: "V8",
-  oauthScopes: [...SCOPES, "https://www.googleapis.com/auth/script.external_request"],
-  webapp: {executeAs: "USER_DEPLOYING", access: "MYSELF"},
+  oauthScopes: SCOPES,
+  webapp: {executeAs: "USER_DEPLOYING", access: "ANYONE_ANONYMOUS"},
   dependencies: {
     enabledAdvancedServices: [
       {userSymbol: "Docs", serviceId: "docs", version: "v1"},
@@ -194,6 +270,14 @@ export const BROKER_MANIFEST = {
       {userSymbol: "Sheets", serviceId: "sheets", version: "v4"},
       {userSymbol: "Drive", serviceId: "drive", version: "v3"},
       {userSymbol: "Classroom", serviceId: "classroom", version: "v1"},
+      {userSymbol: "Gmail", serviceId: "gmail", version: "v1"},
+      {userSymbol: "Calendar", serviceId: "calendar", version: "v3"},
+      {userSymbol: "Tasks", serviceId: "tasks", version: "v1"},
+      {userSymbol: "People", serviceId: "peopleapi", version: "v1"},
+      {userSymbol: "YouTube", serviceId: "youtube", version: "v3"},
+      {userSymbol: "YouTubeAnalytics", serviceId: "youtubeAnalytics", version: "v2"},
+      {userSymbol: "DriveActivity", serviceId: "driveactivity", version: "v2"},
+      {userSymbol: "Chat", serviceId: "chat", version: "v1"},
     ],
   },
 };

@@ -2,7 +2,7 @@ import {spawn} from "node:child_process";
 import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync} from "node:fs";
 import {basename, dirname, join, relative, resolve} from "node:path";
 import {parseArgs} from "node:util";
-import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
+import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
@@ -75,7 +75,7 @@ Drive
   goog ls [query]               recent docs and slides
   goog new <title> [--slides]   create a doc (or a deck) and print its id
   goog open <doc>               print the doc's URL
-  goog auth [status|import <token.json>|script [URL]|client <client_secret.json>]
+  goog auth [status|script [URL|FILE|-|--manual]|import <token.json>|client <client_secret.json>]
 
 Any API call
   goog api <path>               call a Google API with goog's sign-in and print the JSON
@@ -297,13 +297,14 @@ function out(s: string) {
 
 const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
-async function cmdAuth(args: string[]) {
+async function cmdAuth(args: string[], manual = false) {
   const [sub, arg] = args;
   if (!sub || sub === "status") {
     out(`goog auth: ${authStatus()}`);
     if (authStatus() === "not set up") {
       out(`\nSet it up one of three ways:
-  goog auth script     uses an Apps Script in your own Drive; works with school
+  goog auth script     copies an Apps Script into your Drive and deploys it;
+                       no browser needed afterwards, works with school
                        accounts that don't allow Cloud projects (recommended)
   goog auth client F   uses a Google Cloud OAuth client (Desktop app) JSON
   goog auth import F   reuses a refresh token from another tool (authorized_user token.json)`);
@@ -321,8 +322,10 @@ async function cmdAuth(args: string[]) {
     }
   };
   if (sub === "script") {
-    if (!arg) {
-      out(`1. Open https://script.new in the signed-in Chrome.
+    if (manual) {
+      out(`Without the template, the user makes the script by hand:
+
+1. Open https://script.new, signed in to the account goog should use.
 2. Paste this as Code.gs:
 
 ${BROKER_SOURCE}
@@ -331,14 +334,42 @@ ${BROKER_SOURCE}
 
 ${JSON.stringify(BROKER_MANIFEST, null, 2)}
 
-4. Deploy → New deployment → Web app, execute as Me, access Only myself.
-   Authorize it when asked.
-5. Run: goog auth script <the web app URL>`);
+4. Then deploy it as in steps 3-4 of \`goog auth script\`.`);
       return;
     }
+    if (!arg) {
+      out(`goog needs the user to sign in once (about a minute). Put these steps in
+your reply to them as they are, link included, then get the URL from them.
+
+1. Open this link, signed in to the Google account goog should use, and
+   click "Make a copy":
+   ${BROKER_TEMPLATE}
+2. In the copy: Extensions → Apps Script → Deploy → New deployment → Deploy.
+3. Authorize access → Advanced → Go to googity goog (unsafe) → Select all →
+   Continue. "Unsafe" because Google hasn't reviewed it; it's their own copy.
+4. Copy the Web app URL (the bottom one, ending in /exec) and send it back.
+
+The URL works like a password. If you have a tool for asking the user for a
+secret, ask for it with that instead of in the chat, and hand goog the file
+(or stdin) rather than the URL itself.
+
+If Apps Script won't open, they're signed in to several Google accounts:
+a private window with only this one fixes it.
+
+Then run: goog auth script <the /exec URL, or a file holding it, or - to
+read it from stdin>
+Never put the URL in files, commits or logs.
+To revoke it: Deploy → Manage deployments → Archive.
+No template: goog auth script --manual.`);
+      return;
+    }
+    // The URL works like a password, so it can come from a file (or stdin, as
+    // "-") and stay out of the command line and the agent's transcript.
+    const url = arg === "-" ? readFileSync(0, "utf8").trim() : /^https?:/.test(arg) ? arg : readFileSync(arg, "utf8").trim();
+    if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) throw new Error("that isn't an Apps Script web app URL (https://script.google.com/…/exec)");
     const cfg = loadConfig();
     const before = structuredClone(cfg);
-    cfg.broker = arg;
+    cfg.broker = url;
     delete cfg.client;
     saveConfig(cfg);
     forgetToken(); // the cached token came from the old sign-in
@@ -810,6 +841,7 @@ export async function main(argv: string[]) {
       to: {type: "string"},
       type: {type: "boolean"},
       wpm: {type: "string"},
+      manual: {type: "boolean"},
     },
   });
   const asJson = !!flags.json;
@@ -827,7 +859,7 @@ export async function main(argv: string[]) {
     case "skill":
       return cmdSkill(pos[0], !!flags.force, asJson);
     case "auth":
-      return cmdAuth(pos);
+      return cmdAuth(pos, !!flags.manual);
     case "edit": {
       const ref = await docRef(need(pos[0], "goog edit <doc> [-o FILE] [--bg]"));
       if (flags.pull && flags.push) throw new Error("pick one of --pull and --push");
