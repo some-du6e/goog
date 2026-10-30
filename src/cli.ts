@@ -323,7 +323,8 @@ async function cmdAuth(args: string[], manual = false) {
   };
   if (sub === "script") {
     if (manual) {
-      out(`Without the template, the user makes the script by hand:
+      out(`Without the template, the user makes the script by hand. Put these steps
+in your reply to them as they are:
 
 1. Open https://script.new, signed in to the account goog should use.
 2. Paste this as Code.gs:
@@ -334,7 +335,12 @@ ${BROKER_SOURCE}
 
 ${JSON.stringify(BROKER_MANIFEST, null, 2)}
 
-4. Deploy → New deployment → Deploy, then do steps 3-4 of \`goog auth script\`.`);
+4. Deploy → New deployment → the gear → Web app. Who has access: Anyone.
+   Deploy, then Authorize access → Advanced → Go to (the project) (unsafe) →
+   Select all → Continue.
+5. Copy the Web app URL (ending in /exec) and send it back.
+
+Then get the URL to goog as \`goog auth script\` describes.`);
       return;
     }
     if (!arg) {
@@ -366,6 +372,7 @@ No template: goog auth script --manual.`);
     // The URL works like a password, so it can come from a file (or stdin, as
     // "-") and stay out of the command line and the agent's transcript.
     let url = arg.trim();
+    if (url === "-" && process.stdin.isTTY) throw new Error("goog auth script - reads the URL from stdin; pipe it in");
     if (!/^https?:/.test(url)) {
       try {
         url = readFileSync(url === "-" ? 0 : url, "utf8").trim();

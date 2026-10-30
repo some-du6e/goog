@@ -116,15 +116,17 @@ Observed live; the code depends on each:
 
 ## Apps Script broker ground truth
 
-`goog auth script` depends on each of these, observed live:
+Observed live while building `goog auth script`:
 
 - A web app deployed "execute as me, access Anyone" answers without cookies;
   "Only myself" redirects a cookieless request to accounts.google.com.
 - A POST to `/exec` answers 302 to `script.googleusercontent.com`, which
   fetch follows as a GET and which carries doPost's output. A doGet-only
   deployment answers POST with an HTML error page.
-- Google indexes `script.googleusercontent.com` pages, so the template only
-  hands out the token to POST (`BROKER_SOURCE`).
+- Google indexes `script.googleusercontent.com` pages (a `site:` search
+  finds them), and anything that GETs the URL (a browser, a link preview, a
+  crawler) would get what doGet returns, so the template only hands out the
+  token to POST (`BROKER_SOURCE`).
 - The script's hidden Cloud project only enables an API that the manifest
   lists as an advanced service. Apps Script has no Forms service, so Forms
   answers 403 "has not been used in project". Its Apps Script API can't be

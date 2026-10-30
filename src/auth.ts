@@ -146,12 +146,14 @@ async function askBroker(send: (method: string) => Promise<{url: string; status:
 }
 
 // The broker URL works like a password, so errors never quote it. Playwright's
-// errors end with a call log that does.
+// errors end with a call log of every header, cookies and redirects included,
+// so that goes too.
 async function hidingUrl<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e: any) {
-    throw new Error(String(e?.message ?? e).replace(/https:\/\/script\.google\.com\/\S*/g, "<broker URL>"));
+    const msg = String(e?.message ?? e).split(/\n\s*Call log:/)[0];
+    throw new Error(msg.replace(/https:\/\/script\.google(usercontent)?\.com\/\S*/g, "<broker URL>"));
   }
 }
 

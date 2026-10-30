@@ -11,7 +11,8 @@ import {test} from "node:test";
 const tmp = mkdtempSync(join(tmpdir(), "goog-auth-test-"));
 process.env.GOOG_CACHE_DIR = join(tmp, "cache");
 process.env.GOOG_CONFIG_DIR = join(tmp, "config");
-const {forgetToken, getToken, loginWithClient} = await import("../src/auth.ts");
+delete process.env.GOOG_TOKEN; // it would stand in for every sign-in tested here
+const {authStatus, BROKER_SOURCE, forgetToken, getToken, loginWithClient} = await import("../src/auth.ts");
 const {saveConfig} = await import("../src/config.ts");
 
 test("sign-in ignores replies without its state, and sends the PKCE verifier", {timeout: 10_000}, async () => {
@@ -48,18 +49,18 @@ test("sign-in ignores replies without its state, and sends the PKCE verifier", {
 async function withBroker(landed: string, reply: (method: string) => string, fn: () => Promise<unknown>): Promise<string[]> {
   const realFetch = globalThis.fetch;
   const asked: string[] = [];
-  globalThis.fetch = (async (url: any, init?: any) => {
-    if (String(url).startsWith("https://oauth2.googleapis.com/tokeninfo")) return new Response(JSON.stringify({expires_in: "3000"}));
-    if (String(url) !== BROKER) return realFetch(url, init);
-    asked.push(init?.method ?? "GET");
-    const r = new Response(reply(init?.method ?? "GET"));
-    Object.defineProperty(r, "url", {value: landed});
-    return r;
-  }) as typeof fetch;
   // Nothing listens here, so a fallback to Chrome fails with "no Chrome at".
   saveConfig({broker: BROKER, chrome: {endpoint: "http://127.0.0.1:1"}});
   forgetToken();
   try {
+    globalThis.fetch = (async (url: any, init?: any) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/tokeninfo")) return new Response(JSON.stringify({expires_in: "3000"}));
+      if (String(url) !== BROKER) return realFetch(url, init);
+      asked.push(init?.method ?? "GET");
+      const r = new Response(reply(init?.method ?? "GET"));
+      Object.defineProperty(r, "url", {value: landed});
+      return r;
+    }) as typeof fetch;
     await fn();
   } finally {
     globalThis.fetch = realFetch;
@@ -98,6 +99,22 @@ test("a broker that answers with no token says so, without quoting its URL or go
     assert.rejects(getToken(), (e: any) => /didn't return a token/.test(e.message) && !e.message.includes("SECRET") && !/Chrome/.test(e.message)),
   );
   await withBroker(echo, () => JSON.stringify({error: "Exception: no access"}), () => assert.rejects(getToken(), /returned an error: Exception: no access/));
+});
+
+test("a failed request's error quotes neither the URL nor a call log's cookies", async () => {
+  // The shape of a Playwright error: the URL in the message, then every header.
+  const leaky = `apiRequestContext.fetch: Timeout exceeded at ${BROKER}\nCall log:\n  → POST ${BROKER}\n    cookie: SID=sessioncookie\n  ← 302\n    location: https://script.googleusercontent.com/macros/echo?user_content_key=k`;
+  await withBroker(echo, () => {
+    throw new Error(leaky);
+  }, () => assert.rejects(getToken(), (e: any) => /Timeout exceeded/.test(e.message) && !/SECRET|sessioncookie|user_content_key/.test(e.message)));
+});
+
+test("the broker's URL stays out of goog auth status, and its token out of a plain visit", () => {
+  saveConfig({broker: BROKER});
+  assert.equal(authStatus(), "using the Apps Script broker");
+  const doGet = BROKER_SOURCE.slice(0, BROKER_SOURCE.indexOf("function doPost"));
+  assert.match(doGet, /function doGet/);
+  assert.doesNotMatch(doGet, /getOAuthToken/);
 });
 
 test("not signed in, the error tells the agent to run goog auth script", async () => {
