@@ -108,10 +108,12 @@ async function fetchToken(): Promise<Cached> {
     const url = cfg.broker;
     const j: any = await hidingUrl(async () => {
       const plain = await askBroker(async (method) => {
-        const r = await fetch(url, {method, signal: AbortSignal.timeout(30_000)}).catch((e) => {
+        try {
+          const r = await fetch(url, {method, signal: AbortSignal.timeout(30_000)});
+          return {url: r.url, status: r.status, text: await r.text()};
+        } catch (e: any) {
           throw new Error(`couldn't reach the Apps Script broker: ${e.cause?.code ?? e.message}`);
-        });
-        return {url: r.url, status: r.status, text: await r.text()};
+        }
       });
       if ("reply" in plain) return plain.reply;
       const sentAway = `the Apps Script broker sent goog to ${plain.left}, a sign-in page or a network filter's block page`;
