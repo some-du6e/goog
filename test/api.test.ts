@@ -80,7 +80,7 @@ test("headers", () => {
   assert.throws(() => parseHeader("host: evil.com"), /sets host itself/);
   assert.throws(() => parseHeader("Transfer-Encoding: chunked"), /sets Transfer-Encoding itself/);
   assert.throws(() => parseHeader("connection: close"), /sets connection itself/);
-  assert.throws(() => parseHeader("Expect: 100-continue"), /sets Expect itself/);
+  for (const h of ["Expect: 100-continue", "Keep-Alive: timeout=5", "Upgrade: h2c"]) assert.throws(() => parseHeader(h), /itself/, h);
   assert.throws(() => parseHeader("X-HTTP-Method-Override: DELETE"), /use -X instead/);
   assert.throws(() => parseHeader("X-Note: café ☃"), /only Latin-1 fits/);
   assert.deepEqual(parseHeader("X-Note: café"), ["X-Note", "café"]);
@@ -271,7 +271,7 @@ test("goog api retries a read but never resends a write Google may have run", as
 test("a write is resent after a connection that never opened, but not after one that dropped", async () => {
   const lost = (code: string) => Object.assign(new TypeError("fetch failed"), {cause: {code}});
   const reset = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNRESET")]);
-  assert.match(reset.error ?? "", /can't reach Google \(ECONNRESET\)/);
+  assert.equal(reset.error, "can't reach Google (ECONNRESET); the write may still have gone through");
   assert.equal(reset.sent.length, 1);
   const refused = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNREFUSED"), json({id: "b"})]);
   assert.equal(refused.error, undefined);
@@ -289,6 +289,9 @@ const broken = (status: number, headers: Record<string, string> = {}) => new Res
 test("an answer that breaks off partway says so; an error that does is still retried", async () => {
   const r = await run(["drive/v3/files/a"], [broken(200)]);
   assert.equal(r.error, "the connection broke during the answer (UND_ERR_SOCKET)");
+  const write = await run(["drive/v3/files/a/copy", "-X", "POST"], [broken(200)]);
+  assert.equal(write.error, "the connection broke during the answer (UND_ERR_SOCKET); Google did the write (HTTP 200), but its answer was lost");
+  assert.equal(write.sent.length, 1);
   // Every command's api() call, not just goog api's.
   const {api} = await import("../src/google.ts");
   const real = globalThis.fetch;

@@ -78,7 +78,8 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
         await sleep(delayMs);
         continue;
       }
-      throw new ApiError(0, `can't reach Google (${why}); ${timedOut && method !== "GET" ? "the write may still have gone through" : "check the network connection"}`);
+      // Rerunning a write that may have landed could do it twice; say so.
+      throw new ApiError(0, `can't reach Google (${why}); ${method !== "GET" && !unsent ? "the write may still have gone through" : "check the network connection"}`);
     }
     clearTimeout(timer);
     const bytes = async (limit: number) => {
@@ -86,7 +87,8 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       try {
         return Buffer.from(await r.arrayBuffer());
       } catch (e: any) {
-        throw new ApiError(0, e?.name === "TimeoutError" ? `the answer took over ${limit / 1000}s to come in` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`);
+        const done = r.ok && method !== "GET" ? `; Google did the write (HTTP ${r.status}), but its answer was lost` : "";
+        throw new ApiError(0, (e?.name === "TimeoutError" ? `the answer took over ${limit / 1000}s to come in` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`) + done);
       } finally {
         clearTimeout(timer);
       }
