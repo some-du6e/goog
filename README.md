@@ -254,8 +254,9 @@ you fix them.
   as a key to your account, so keep it private; archive the deployment to
   revoke it. The script asks for most of the account up front (Docs, Slides,
   Sheets, Drive, Gmail, Calendar, Tasks, Contacts, YouTube, Chat and every
-  Classroom scope) so it never needs redeploying, and you can untick any of
-  it on Google's permission screen. The Forms API isn't reachable this way.
+  Classroom scope) so it never needs redeploying. You can untick what you
+  don't need on Google's permission screen, except Drive, which goog uses to
+  check the sign-in and to find files. The Forms API isn't reachable this way.
   `--manual` prints the script to paste instead of copying the template.
   Deployed for "Only myself", goog calls it through your signed-in Chrome
   (CDP on `127.0.0.1:9223`).

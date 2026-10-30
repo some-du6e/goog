@@ -304,8 +304,8 @@ async function cmdAuth(args: string[], manual = false) {
     if (authStatus() === "not set up") {
       out(`\nSet it up one of three ways:
   goog auth script     an Apps Script you copy from a template and deploy;
-                       no Cloud project, works with school accounts, and no
-                       browser on this machine (recommended)
+                       no Cloud project, and once it's deployed for Anyone,
+                       no browser on this machine (recommended)
   goog auth client F   uses a Google Cloud OAuth client (Desktop app) JSON
   goog auth import F   reuses a refresh token from another tool (authorized_user token.json)`);
     }
