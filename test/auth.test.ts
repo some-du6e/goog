@@ -44,9 +44,10 @@ test("sign-in ignores replies without its state, and sends the PKCE verifier", {
   assert.equal(createHash("sha256").update(exchanged!.get("code_verifier")!).digest("base64url"), challenge);
 });
 
-// Plays a broker that answers `reply(method)`, as seen after following
-// redirects to `landed`, and returns the methods it was asked with.
-async function withBroker(landed: string, reply: (method: string) => string, fn: () => Promise<unknown>): Promise<string[]> {
+// Plays a broker that answers `reply(method)` (a body, or a body and status),
+// as seen after following redirects to `landed`, and returns the methods it
+// was asked with.
+async function withBroker(landed: string, reply: (method: string) => string | [string, number], fn: () => Promise<unknown>): Promise<string[]> {
   const realFetch = globalThis.fetch;
   const asked: string[] = [];
   // Nothing listens here, so a fallback to Chrome fails with "no Chrome at".
@@ -57,7 +58,9 @@ async function withBroker(landed: string, reply: (method: string) => string, fn:
       if (String(url).startsWith("https://oauth2.googleapis.com/tokeninfo")) return new Response(JSON.stringify({expires_in: "3000"}));
       if (String(url) !== BROKER) return realFetch(url, init);
       asked.push(init?.method ?? "GET");
-      const r = new Response(reply(init?.method ?? "GET"));
+      const out = reply(init?.method ?? "GET");
+      const [body, status] = Array.isArray(out) ? out : [out, 200];
+      const r = new Response(body, {status});
       Object.defineProperty(r, "url", {value: landed});
       return r;
     }) as typeof fetch;
@@ -91,22 +94,25 @@ test("a broker that asks for a sign-in goes to Chrome after one request, and wit
   // With no Chrome, the error names the fix that needs none.
   for (const signIn of ["https://accounts.google.com/v3/signin/identifier", "https://login.microsoftonline.com/school/saml2"]) {
     const asked = await withBroker(signIn, () => JSON.stringify({token: "not-this"}), () =>
-      assert.rejects(getToken(), /isn't deployed for Anyone: redeploy it with Who has access: Anyone if .*\(no Chrome at/),
+      assert.rejects(getToken(), new RegExp(`sent goog to ${new URL(signIn).hostname}, a sign-in page or a network filter's block page. A sign-in means the web app isn't deployed for Anyone: redeploy it for Anyone if .*\\(no Chrome at`)),
     );
     assert.deepEqual(asked, ["POST"]);
   }
 });
 
 test("Google's other pages are errors, not sign-ins", async () => {
-  const asked = await withBroker("https://www.google.com/sorry/index?continue=x", () => "<html>unusual traffic</html>", () =>
-    assert.rejects(getToken(), /didn't return a token/),
+  const asked = await withBroker("https://www.google.com/sorry/index?continue=x", () => ["<html>unusual traffic</html>", 429], () =>
+    assert.rejects(getToken(), /didn't return a token \(HTTP 429\): Google is rate-limiting this network/),
   );
   assert.deepEqual(asked, ["POST", "GET"]);
 });
 
 test("a broker that answers with no token says so, without quoting its URL or going to Chrome", async () => {
-  await withBroker(echo, () => "<html>Sorry, unable to open the file at this time.</html>", () =>
-    assert.rejects(getToken(), (e: any) => /didn't return a token/.test(e.message) && !e.message.includes("SECRET") && !/Chrome/.test(e.message)),
+  await withBroker(echo, () => "<html>Exception: something broke</html>", () =>
+    assert.rejects(getToken(), (e: any) => /HTTP 200\): the script answered with an error page/.test(e.message) && !e.message.includes("SECRET") && !/Chrome/.test(e.message)),
+  );
+  await withBroker(BROKER, () => ["<html>Sorry, unable to open the file at this time.</html>", 404], () =>
+    assert.rejects(getToken(), /HTTP 404\): there's no such deployment/),
   );
   await withBroker(echo, () => JSON.stringify({error: "Exception: no access"}), () => assert.rejects(getToken(), /returned an error: Exception: no access/));
 });

@@ -381,6 +381,7 @@ No template: goog auth script --manual.`);
         // Not quoting it: it may be the URL, mistyped.
         throw new Error("pass the /exec URL, a file holding it, or - to read it from stdin");
       }
+      if (!url) throw new Error(arg.trim() === "-" ? "nothing came in on stdin" : "that file is empty");
     }
     if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) throw new Error("that isn't an Apps Script web app URL (https://script.google.com/…/exec)");
     const cfg = loadConfig();

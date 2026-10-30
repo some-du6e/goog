@@ -178,6 +178,8 @@ test("auth script: refuses what isn't an /exec URL without quoting it or saving 
   // Read from stdin: the error is the URL check's, not the "pass the URL" one.
   const piped = spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "https://example.com/x\n"});
   assert.match(piped.stderr, /isn't an Apps Script web app URL/);
+  const empty = spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: ""});
+  assert.match(empty.stderr, /nothing came in on stdin/);
   writeFileSync(join(tmp, "url.txt"), "https://example.com/x\n");
   assert.match(goog("auth", "script", "url.txt").stderr, /isn't an Apps Script web app URL/);
   assert.equal(existsSync(join(tmp, "config", "config.json")), false);
