@@ -151,7 +151,7 @@ async function run(args: string[], answers: (Response | Error)[], opts: {tty?: b
   }) as typeof fetch;
   io.out = (c) => void (stdout += Buffer.isBuffer(c) ? c.toString("latin1") : c);
   io.err = (s) => void (stderr += s);
-  io.tty = () => !!opts.tty;
+  io.tty = () => opts.tty ?? true;
   let error: string | undefined;
   try {
     await cmdApi(args, "help");
@@ -195,6 +195,11 @@ test("--input is the body, and fields then go in the query", async () => {
   assert.equal(r.sent[0].method, "POST");
   assert.equal(r.sent[0].url.href, "https://docs.googleapis.com/v1/documents/d:batchUpdate?x=1");
   assert.equal(r.sent[0].body.requests[0].insertText.text, "hi");
+  // A BOM is dropped.
+  writeFileSync(join(tmp, "bom.json"), '\ufeff{"a": 1}');
+  const bom = await run(["drive/v3/x", "-X", "POST", "--input", join(tmp, "bom.json"), "-F", "t=@" + join(tmp, "bom.json")], [json({})]);
+  assert.equal(bom.raw, '{"a": 1}');
+  assert.equal(bom.sent[0].url.searchParams.get("t"), '{"a": 1}');
   // Sent as written: a number past 2^53 keeps its digits.
   writeFileSync(join(tmp, "big.json"), '{"id": 12345678901234567890}');
   const big = await run(["drive/v3/x", "-X", "POST", "--input", join(tmp, "big.json")], [json({})]);
@@ -245,14 +250,20 @@ test("--paginate stops on a failed page, a non-JSON page, or a repeated token", 
 });
 
 test("what goog api prints", async () => {
-  const r = async (a: Response, args: string[] = [], tty = false) => run(["drive/v3/x", ...args], [a], {tty});
+  const r = async (a: Response, args: string[] = [], tty = true) => run(["drive/v3/x", ...args], [a], {tty});
   assert.equal((await r(new Response("hello\n", {headers: {"content-type": "text/plain; charset=utf-8"}}))).stdout, "hello\n");
   assert.equal((await r(new Response(null, {status: 204}))).stdout, "");
   assert.equal((await r(json({a: 1}), ["--silent"])).stdout, "");
   assert.equal((await r(new Response("{bad", {headers: {"content-type": "application/json"}}))).stdout, "{bad");
   const pdf = () => new Response(Buffer.from("%PDF-1.4\0\xff", "latin1"), {headers: {"content-type": "application/pdf"}});
-  assert.equal((await r(pdf())).stdout, "%PDF-1.4\0\xff");
-  const tty = await r(pdf(), [], true);
+  assert.equal((await r(pdf(), [], false)).stdout, "%PDF-1.4\0\xff");
+  // Through a pipe JSON goes as it came, errors included.
+  const file = '{"n": 12345678901234567890, "x": 1.0}';
+  assert.equal((await r(new Response(file, {headers: {"content-type": "application/json"}}), [], false)).stdout, file);
+  const piped = await r(new Response('{"error": {"message": "no"}}', {status: 400, headers: {"content-type": "application/json"}}), [], false);
+  assert.equal(piped.stdout, '{"error": {"message": "no"}}');
+  assert.equal(piped.error, "HTTP 400: no");
+  const tty = await r(pdf());
   assert.match(tty.error ?? "", /application\/pdf \(10 bytes\); redirect it to a file/);
   assert.equal(tty.stdout, "");
   // Errors: Google's JSON on stdout (even with --silent), its message in the error.

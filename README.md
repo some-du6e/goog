@@ -220,8 +220,9 @@ retried after a 5xx or a lost connection. A write is only sent again when
 Google can't have run it (a 429, a rate limit or an expired sign-in), so a
 create that failed with a 5xx or a lost connection is never made twice. A
 call gets 10 minutes, for slow exports and Apps Script runs, and one that
-runs out isn't retried. Errors print Google's error JSON and exit 1. Exports
-and media are written as they come; binary ones need a redirect.
+runs out isn't retried. Errors print Google's error JSON and exit 1. JSON is
+laid out in a terminal; through a pipe, answers, exports and media are
+written as they come. Binary ones need a redirect.
 
 ## How it writes
 

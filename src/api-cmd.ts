@@ -181,7 +181,8 @@ export async function cmdApi(args: string[], help: string) {
       stdinUsed = true;
     }
     try {
-      return readFileSync(f === "-" ? 0 : f, "utf8");
+      // Notepad and PowerShell start UTF-8 files with a BOM.
+      return readFileSync(f === "-" ? 0 : f, "utf8").replace(/^\uFEFF/, "");
     } catch (e: any) {
       throw new Error(`can't read ${f === "-" ? "stdin" : f} for ${what}: ${e.code === "ENOENT" ? "no such file" : e.message}`);
     }
@@ -340,8 +341,11 @@ function show(a: Answer, silent: boolean, method = "GET") {
       parsed = JSON.parse(a.data.toString("utf8"));
     } catch {}
   }
+  // JSON is laid out for a terminal; through a pipe every answer goes as it
+  // came, so a downloaded .json file keeps its bytes.
+  const pretty = parsed !== undefined && io.tty();
   if (ok && !silent) {
-    if (parsed !== undefined) io.out(JSON.stringify(parsed, null, 2) + "\n");
+    if (pretty) io.out(JSON.stringify(parsed, null, 2) + "\n");
     else if (!a.data.length) {
       // 204 and empty answers print nothing.
     } else if (isText(a.type) || isJson(a.type)) io.out(a.data);
@@ -351,7 +355,7 @@ function show(a: Answer, silent: boolean, method = "GET") {
   }
   if (ok) return;
   // Google's JSON error goes to stdout, as gh does; an HTML error page would only be noise.
-  if (parsed !== undefined) io.out(JSON.stringify(parsed, null, 2) + "\n");
+  if (parsed !== undefined) io.out(pretty ? JSON.stringify(parsed, null, 2) + "\n" : a.data);
   const text = a.data.toString("utf8");
   const msg = parsed?.error?.message
     ?? (/html/i.test(a.type) ? /<title>([^<]*)<\/title>/i.exec(text)?.[1]?.trim() : isText(a.type) ? text.trim().slice(0, 300) : undefined)
