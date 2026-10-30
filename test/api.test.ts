@@ -248,6 +248,9 @@ test("what goog api prints", async () => {
   assert.equal(e.error, "HTTP 404: File not found: x.");
   assert.equal(JSON.parse(e.stdout).error.code, 404);
   const page = await r(new Response("<html><title>Error 404 (Not Found)!!1</title><p>long page</p></html>", {status: 404, headers: {"content-type": "text/html; charset=UTF-8"}}));
+  // A write's 5xx isn't a wrong path, and isn't resent.
+  const server = await run(["drive/v3/x", "-X", "POST"], [new Response("<html><title>Error 502 (Server Error)!!1</title></html>", {status: 502, headers: {"content-type": "text/html"}})]);
+  assert.equal(server.error, "HTTP 502: Error 502 (Server Error)!!1; the write may still have gone through");
   assert.equal(page.error, "HTTP 404: Error 404 (Not Found)!!1; no such API path (check the service, version and method name)");
   assert.equal(page.stdout, "");
   assert.match((await r(json({error: {message: "Request had insufficient authentication scopes."}}, 403))).error ?? "", /scopes don't cover this API/);
@@ -260,7 +263,7 @@ test("goog api retries a read but never resends a write Google may have run", as
   assert.equal(get.sent.length, 2);
   assert.match(get.stderr, /Google error 503: busy; retrying in 0s/);
   const post = await run(["drive/v3/files/a/copy", "-X", "POST"], [busy()]);
-  assert.equal(post.error, "HTTP 503: busy");
+  assert.equal(post.error, "HTTP 503: busy; the write may still have gone through");
   assert.equal(post.sent.length, 1);
   // 429 means Google didn't run it, so even a write is sent again.
   const limited = await run(["drive/v3/files/a/copy", "-X", "POST"], [json({error: {code: 429, message: "slow down"}}, 429, {"retry-after": "0"}), json({id: "b"})]);
@@ -273,9 +276,23 @@ test("a write is resent after a connection that never opened, but not after one 
   const reset = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNRESET")]);
   assert.equal(reset.error, "can't reach Google (ECONNRESET); the write may still have gone through");
   assert.equal(reset.sent.length, 1);
-  const refused = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNREFUSED"), json({id: "b"})]);
-  assert.equal(refused.error, undefined);
-  assert.equal(refused.sent.length, 2);
+  for (const code of ["ECONNREFUSED", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT", "SELF_SIGNED_CERT_IN_CHAIN"]) {
+    const refused = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost(code), json({id: "b"})]);
+    assert.equal(refused.error, undefined, code);
+    assert.equal(refused.sent.length, 2, code);
+  }
+  // The message remembers an earlier attempt that may have landed.
+  const {api} = await import("../src/google.ts");
+  const real = globalThis.fetch;
+  const errors = [lost("ECONNRESET"), lost("ECONNREFUSED"), lost("ECONNREFUSED"), lost("ECONNREFUSED")];
+  globalThis.fetch = (async () => {
+    throw errors.shift();
+  }) as typeof fetch;
+  try {
+    await assert.rejects(api("POST", "https://docs.googleapis.com/v1/documents", {}), /\(ECONNREFUSED\); the write may still have gone through/);
+  } finally {
+    globalThis.fetch = real;
+  }
   const read = await run(["drive/v3/files/a"], [lost("ECONNRESET"), json({id: "a"})]);
   assert.equal(read.error, undefined);
   assert.equal(read.sent.length, 2);

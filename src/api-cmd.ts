@@ -213,7 +213,7 @@ export async function cmdApi(args: string[], help: string) {
   // Exports, big downloads and Apps Script runs can take minutes.
   const call = () => api<Answer>(method, url.href, body, {raw: true, headers, timeoutMs: 600_000});
   try {
-    if (!o.paginate) return show(await call(), !!o.silent);
+    if (!o.paginate) return show(await call(), !!o.silent, method);
     return await paginate(url, call, !!o.silent);
   } finally {
     setRetryListener(undefined);
@@ -251,7 +251,7 @@ async function paginate(url: URL, call: () => Promise<Answer>, silent: boolean) 
 }
 
 // Prints an answer; throws for an error, after printing Google's JSON error.
-export function show(a: Answer, silent: boolean) {
+export function show(a: Answer, silent: boolean, method = "GET") {
   const ok = a.status < 300;
   let parsed: any;
   if (isJson(a.type) || (!a.type && a.data.length)) {
@@ -277,7 +277,9 @@ export function show(a: Answer, silent: boolean) {
     ?? "";
   const hint = a.status === 401 ? "; run goog auth to sign in again"
     : a.status === 403 && /scope/i.test(msg) ? "; the token's scopes don't cover this API (goog auth status)"
-    : /html/i.test(a.type) ? "; no such API path (check the service, version and method name)"
+    // A write isn't resent after a 5xx (see api()), but it may have run.
+    : a.status >= 500 && method !== "GET" ? "; the write may still have gone through"
+    : (a.status === 404 || a.status === 405) && /html/i.test(a.type) ? "; no such API path (check the service, version and method name)"
     : "";
   throw new Error(`HTTP ${a.status}${msg ? `: ${msg}` : ""}${hint}`);
 }

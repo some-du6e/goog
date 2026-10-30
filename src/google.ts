@@ -28,8 +28,10 @@ export function setRetryListener(fn: RetryListener | undefined) {
 
 const TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 7;
-// Connection errors that mean the request never left this machine.
-const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+// Connection errors that mean the request never left this machine: no
+// address, no route, no connection, or a certificate refused before sending.
+const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"]);
+const unsentError = (code: unknown) => typeof code === "string" && (NOT_SENT.has(code) || /CERT|^ERR_TLS_/.test(code));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function backoff(attempt: number, retryAfter: string | null, status: number): number {
@@ -49,6 +51,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
   const ms = opts.timeoutMs ?? TIMEOUT_MS;
   const once = opts.raw && method !== "GET";
   let refreshed = false;
+  let maybeSent = false; // a write that may have landed on an earlier attempt
   for (let attempt = 0; ; attempt++) {
     const token = await getToken();
     const headers = new Headers(opts.headers);
@@ -71,7 +74,8 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       const why = timedOut ? `no answer in ${ms / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
       // A write that timed out may have landed; don't send it twice. Nor any
       // goog api write, unless the connection was never made.
-      const unsent = NOT_SENT.has(e?.cause?.code);
+      const unsent = unsentError(e?.cause?.code);
+      if (method !== "GET" && !unsent) maybeSent = true;
       if (attempt < 3 && (method === "GET" || !timedOut) && !(opts.raw && timedOut) && (!once || unsent)) {
         const delayMs = 1000 * 2 ** attempt;
         onRetry?.({status: 0, message: `can't reach Google (${why})`, delayMs, attempt});
@@ -79,7 +83,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
         continue;
       }
       // Rerunning a write that may have landed could do it twice; say so.
-      throw new ApiError(0, `can't reach Google (${why}); ${method !== "GET" && !unsent ? "the write may still have gone through" : "check the network connection"}`);
+      throw new ApiError(0, `can't reach Google (${why}); ${maybeSent ? "the write may still have gone through" : "check the network connection"}`);
     }
     clearTimeout(timer);
     const bytes = async (limit: number) => {
