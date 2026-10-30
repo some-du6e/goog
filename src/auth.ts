@@ -114,16 +114,20 @@ async function fetchToken(): Promise<Cached> {
         return {url: r.url, status: r.status, text: await r.text()};
       });
       if ("reply" in plain) return plain.reply;
+      const sentAway = `the Apps Script broker sent goog to ${plain.left}, a sign-in page or a network filter's block page`;
       return withBrowser(async (ctx) => {
         const viaChrome = await askBroker(async (method) => {
           const r = await ctx.request.fetch(url, {method, timeout: 30_000});
           return {url: r.url(), status: r.status(), text: await r.text()};
+        }).catch((e) => {
+          // Chrome opens it as its first signed-in account, which may not own it.
+          throw new Error(`${sentAway}, so goog asked through Chrome, and there ${e.message.replace(/^the Apps Script broker /, "it ")}. If Chrome is signed in to several Google accounts, the one that deployed it has to be the first`);
         });
         if ("reply" in viaChrome) return viaChrome.reply;
-        throw new Error(`Chrome was sent to ${viaChrome.left} too: sign in to Google there, or a network filter is blocking Apps Script`);
+        throw new Error(`${sentAway}, and Chrome was sent to ${viaChrome.left} too: sign in to Google there, or a network filter is blocking Apps Script`);
       }).catch((e) => {
-        if (!/^no Chrome at/.test(e.message)) throw e;
-        throw new Error(`the Apps Script broker sent goog to ${plain.left}, a sign-in page or a network filter's block page. A sign-in means the web app isn't deployed for Anyone: redeploy it for Anyone if your account offers that, or goog needs your signed-in Chrome (${e.message})`);
+        if (!/^(no Chrome at|started .* but nothing answered)/.test(e.message)) throw e;
+        throw new Error(`${sentAway}. A sign-in means the web app isn't deployed for Anyone: redeploy it for Anyone if your account offers that, or goog needs your signed-in Chrome (${e.message})`);
       });
     });
     // Only the field names: a reply without `token` may still hold one.
@@ -140,23 +144,26 @@ async function fetchToken(): Promise<Cached> {
 // it went to. A broker not deployed for Anyone answers only through the
 // signed-in Chrome.
 async function askBroker(send: (method: string) => Promise<{url: string; status: number; text: string}>): Promise<{reply: any} | {left: string}> {
-  let first: URL | undefined;
-  let status = 0;
+  const answers: {status: number; path: string}[] = [];
   for (const method of ["POST", "GET"]) {
     const r = await send(method);
     const at = new URL(r.url);
     if (at.hostname === "accounts.google.com" || !/(^|\.)google(usercontent)?\.com$/.test(at.hostname)) return {left: at.hostname};
     const reply = json(r.text);
     if (reply) return {reply};
-    first ??= at;
-    status ||= r.status;
+    answers.push({status: r.status, path: at.pathname});
   }
-  // Each from what Google sent, not a guess: a /sorry page, a 404, or else an
-  // error page from the script itself.
-  const why =
-    status === 429 || first!.pathname.startsWith("/sorry") ? "Google is rate-limiting this network; try again later"
-    : status === 404 ? "there's no such deployment: it was archived or deleted, or the URL is mistyped"
-    : "the script answered with an error page; it may need authorizing again (open it, Deploy → New deployment)";
+  // Said from what Google answered to either request, not guessed.
+  const any = (is: (a: {status: number; path: string}) => boolean) => answers.find(is);
+  const limited = any((a) => a.status === 429 || a.path.startsWith("/sorry"));
+  const down = any((a) => a.status >= 500);
+  const last = answers[answers.length - 1];
+  const [status, why] =
+    limited ? [limited.status, "Google is rate-limiting this network; try again later"]
+    : down ? [down.status, "Google answered with a server error; try again later"]
+    : last.status === 404 ? [404, "there's no such deployment: it was archived or deleted, or the URL is mistyped"]
+    : last.status === 403 ? [403, "Google refused access to the script"]
+    : [last.status, "the script answered with an error page; it may need authorizing again (open it, Deploy → New deployment)"];
   throw new Error(`the Apps Script broker didn't return a token (HTTP ${status}): ${why}`);
 }
 

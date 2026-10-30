@@ -180,6 +180,8 @@ test("auth script: refuses what isn't an /exec URL without quoting it or saving 
   assert.match(piped.stderr, /isn't an Apps Script web app URL/);
   const empty = spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: ""});
   assert.match(empty.stderr, /nothing came in on stdin/);
+  writeFileSync(join(tmp, "empty.txt"), " \n");
+  assert.match(goog("auth", "script", "empty.txt").stderr, /that file is empty/);
   writeFileSync(join(tmp, "url.txt"), "https://example.com/x\n");
   assert.match(goog("auth", "script", "url.txt").stderr, /isn't an Apps Script web app URL/);
   assert.equal(existsSync(join(tmp, "config", "config.json")), false);

@@ -105,6 +105,13 @@ test("Google's other pages are errors, not sign-ins", async () => {
     assert.rejects(getToken(), /didn't return a token \(HTTP 429\): Google is rate-limiting this network/),
   );
   assert.deepEqual(asked, ["POST", "GET"]);
+  // Either sign alone is enough, and from either request: an old doGet-only
+  // broker's POST gets an error page, and its GET can be the one limited.
+  await withBroker("https://www.google.com/sorry/index", () => "<html>unusual traffic</html>", () => assert.rejects(getToken(), /rate-limiting/));
+  await withBroker(echo, (m) => (m === "POST" ? "<html>Script function not found: doPost</html>" : ["slow down", 429]), () =>
+    assert.rejects(getToken(), /HTTP 429\): Google is rate-limiting/),
+  );
+  await withBroker(echo, () => ["<html>Server Error</html>", 502], () => assert.rejects(getToken(), /HTTP 502\): Google answered with a server error/));
 });
 
 test("a broker that answers with no token says so, without quoting its URL or going to Chrome", async () => {
