@@ -11,10 +11,10 @@ into a `.goog` text file and pushes your edits back.
 If a command says goog isn't signed in, run `goog auth script` and put the
 steps it prints in your reply, since the user can't see command output. They
 copy a template, deploy it, and send you a URL ending in `/exec`; run
-`goog auth script <that URL>`, and after that goog needs no browser. The URL
-works like a password: ask for it through a secret-input tool if you have
-one, give goog the file it lands in (`goog auth script <file>`, or `-` for
-stdin), and don't repeat it anywhere.
+`goog auth script <that URL>`. Deployed for Anyone, goog then needs no
+browser. The URL works like a password: ask for it through a secret-input
+tool if you have one, give goog the file it lands in (`goog auth script
+<file>`, or `-` for stdin), and don't repeat it anywhere.
 
 1. **Pull.** In a fresh directory: `goog pull <doc url or id>`. It prints the
    file's path, then the paths of the doc's images (`<id>.files/<img id>.png`),
