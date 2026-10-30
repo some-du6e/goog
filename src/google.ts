@@ -115,7 +115,7 @@ async function whatIs(url: string): Promise<string | null> {
 // A sign-in keeps the scopes it was granted: running goog auth script again
 // with the same URL brings the same token, and the permission screen only
 // comes back once the old grant is gone.
-const regrant = "the sign-in wasn't granted that scope. For goog auth script, remove the script's access at myaccount.google.com/permissions, then open the script and click Run, which asks for the permissions again; for goog auth client, run it again and allow everything";
+export const regrant = "the sign-in wasn't granted that scope. For goog auth script, remove the script's access at myaccount.google.com/permissions, then open the script and click Run, which asks for the permissions again; for goog auth client, run it again and allow everything";
 
 function explain(status: number, msg: string, url: string): string {
   const id = /\/documents\/([\w-]+)|\/files\/([\w-]+)/.exec(url);

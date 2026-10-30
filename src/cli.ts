@@ -298,6 +298,8 @@ function out(s: string) {
 const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
 async function cmdAuth(args: string[], manual = false) {
+  // `goog auth <url>`, with "script" left out, means the broker.
+  if (/^https?:/.test(args[0] ?? "")) args = ["script", ...args];
   const [sub, arg] = args;
   if (!sub || sub === "status") {
     out(`goog auth: ${authStatus()}`);
@@ -366,7 +368,9 @@ a private window with only this one fixes it.
 Then run: goog auth script <the /exec URL, or a file holding it, or - to
 read it from stdin>
 Never put the URL in repos, commits or logs.
-To revoke it: Deploy → Manage deployments → Archive.
+If it leaks: Deploy → Manage deployments → Archive stops the URL, and
+removing the script at myaccount.google.com/permissions ends the tokens it
+already gave out.
 No template: goog auth script --manual.`);
       return;
     }
@@ -379,7 +383,7 @@ No template: goog auth script --manual.`);
         url = readFileSync(url === "-" ? 0 : url, "utf8").trim();
       } catch (e: any) {
         // Not quoting it: it may be the URL, mistyped.
-        if (e.code !== "ENOENT") throw new Error(`couldn't read that file (${e.code ?? e.message})`);
+        if (e.code !== "ENOENT") throw new Error(`couldn't read that file (${e.code ?? "unknown error"})`);
         throw new Error("pass the /exec URL, a file holding it, or - to read it from stdin");
       }
       if (!url) throw new Error(arg.trim() === "-" ? "nothing came in on stdin" : "that file is empty");
@@ -441,7 +445,7 @@ No template: goog auth script --manual.`);
     out("goog auth: OK");
     return;
   }
-  throw new Error(`unknown auth command "${sub}"`);
+  throw new Error("unknown auth command; it's status, script, import or client"); // not quoting it: it may be a secret
 }
 
 

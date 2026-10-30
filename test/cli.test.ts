@@ -170,6 +170,8 @@ test("auth script: refuses what isn't an /exec URL without quoting it or saving 
     goog("auth", "script", secret),
     goog("auth", "script", "https://example.com/x"),
     goog("auth", "script", "http://script.google.com/macros/s/AKfycbSECRET/exec"), // not https
+    goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec"), // "script" left out
+    goog("auth", "script.google.com/macros/s/AKfycbSECRET/exec"),
     spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "not a url\n"}),
   ]) {
     assert.equal(r.status, 1);

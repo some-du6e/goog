@@ -251,8 +251,9 @@ you fix them.
   script comes with it), deploy the script as a web app for "Anyone", and run
   `goog auth script <the /exec URL>` (or a file holding it, or `-` for
   stdin). goog then fetches tokens directly, with no browser. The URL works
-  as a key to your account, so keep it private; archive the deployment to
-  revoke it. The script asks for most of the account up front (Docs, Slides,
+  as a key to your account, so keep it private. If it leaks, archiving the
+  deployment stops the URL, and removing the script at
+  myaccount.google.com/permissions ends the tokens it already gave out. The script asks for most of the account up front (Docs, Slides,
   Sheets, Drive, Gmail, Calendar, Tasks, Contacts, YouTube, Chat and every
   Classroom scope) so it never needs redeploying. You can untick what you
   don't need on Google's permission screen, except Drive, which goog uses to

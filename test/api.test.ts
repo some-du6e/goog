@@ -276,7 +276,7 @@ test("what goog api prints", async () => {
   assert.equal(server.error, "HTTP 502: Error 502 (Server Error)!!1; the write may still have gone through");
   assert.equal(page.error, "HTTP 404: Error 404 (Not Found)!!1; no such API path (check the service, version and method name)");
   assert.equal(page.stdout, "");
-  assert.match((await r(json({error: {message: "Request had insufficient authentication scopes."}}, 403))).error ?? "", /scopes don't cover this API/);
+  assert.match((await r(json({error: {message: "Request had insufficient authentication scopes."}}, 403))).error ?? "", /wasn't granted that scope/);
 });
 
 test("goog api retries a read but never resends a write Google may have run", async () => {
