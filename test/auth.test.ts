@@ -121,6 +121,7 @@ test("a broker that answers with no token says so, without quoting its URL or go
   await withBroker(BROKER, () => ["<html>Sorry, unable to open the file at this time.</html>", 404], () =>
     assert.rejects(getToken(), /HTTP 404\): there's no such deployment/),
   );
+  await withBroker(BROKER, () => ["<html>Forbidden</html>", 403], () => assert.rejects(getToken(), /HTTP 403\): Google refused access to the script; open it as its owner/));
   await withBroker(echo, () => JSON.stringify({error: "Exception: no access"}), () => assert.rejects(getToken(), /returned an error: Exception: no access/));
 });
 

@@ -125,7 +125,8 @@ Observed live while building `goog auth script`:
   filter's block page.
 - A POST to `/exec` answers 302 to `script.googleusercontent.com`, which
   fetch follows as a GET and which carries doPost's output. A doGet-only
-  deployment answers POST with an HTML error page.
+  deployment answers POST with a 200 HTML error page on script.google.com
+  that names doPost. A deployment that doesn't exist answers 404 there.
 - Google indexes `script.googleusercontent.com` pages (a `site:` search
   finds them), and anything that GETs the URL (a browser, a link preview, a
   crawler) would get what doGet returns, so the template only hands out the

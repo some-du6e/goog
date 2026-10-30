@@ -120,8 +120,9 @@ async function fetchToken(): Promise<Cached> {
           const r = await ctx.request.fetch(url, {method, timeout: 30_000});
           return {url: r.url(), status: r.status(), text: await r.text()};
         }).catch((e) => {
-          // Chrome opens it as its first signed-in account, which may not own it.
-          throw new Error(`${sentAway}, so goog asked through Chrome, and there ${e.message.replace(/^the Apps Script broker /, "it ")}. If Chrome is signed in to several Google accounts, the one that deployed it has to be the first`);
+          // Chrome may open it as its first signed-in account, which may not own it.
+          const account = /\(HTTP 40[34]\)/.test(e.message) ? ". If Chrome is signed in to several Google accounts, the one that deployed it may need to be the first" : "";
+          throw new Error(`${sentAway}, so goog asked through Chrome, and there ${e.message.replace(/^the Apps Script broker /, "it ")}${account}`);
         });
         if ("reply" in viaChrome) return viaChrome.reply;
         throw new Error(`${sentAway}, and Chrome was sent to ${viaChrome.left} too: sign in to Google there, or a network filter is blocking Apps Script`);
@@ -162,7 +163,7 @@ async function askBroker(send: (method: string) => Promise<{url: string; status:
     limited ? [limited.status, "Google is rate-limiting this network; try again later"]
     : down ? [down.status, "Google answered with a server error; try again later"]
     : last.status === 404 ? [404, "there's no such deployment: it was archived or deleted, or the URL is mistyped"]
-    : last.status === 403 ? [403, "Google refused access to the script"]
+    : last.status === 403 ? [403, "Google refused access to the script; open it as its owner and deploy it again"]
     : [last.status, "the script answered with an error page; it may need authorizing again (open it, Deploy → New deployment)"];
   throw new Error(`the Apps Script broker didn't return a token (HTTP ${status}): ${why}`);
 }
