@@ -14,6 +14,7 @@ import {clock, parseVideo, timed, transcript} from "./youtube.ts";
 import {createDeck, drawNow, drawingPid, waitForDrawing} from "./slides.ts";
 import {DEFAULT_WPM, type Typing} from "./typing.ts";
 import {DRIVE, api} from "./google.ts";
+import {cmdApi} from "./api-cmd.ts";
 import {
   bodyOf, canonBody, imagesDir, isAlive, listStates, logPath, patch, pull, push, readBase, readState, readText, reconcile,
   resolveRef, watcherOf, forgetState, forgetBase,
@@ -75,6 +76,30 @@ Drive
   goog new <title> [--slides]   create a doc (or a deck) and print its id
   goog open <doc>               print the doc's URL
   goog auth [status|import <token.json>|script [URL]|client <client_secret.json>]
+
+Any API call
+  goog api <path>               call a Google API with goog's sign-in and print the JSON
+                                answer, like gh api. <path> is <service>/<version>/…
+                                (docs/v1/documents/ID, slides/v1/presentations/ID,
+                                drive/v3/files, classroom/v1/courses) or a full
+                                https://*.googleapis.com URL. A GET unless -X says
+                                otherwise, or a POST with --input. Bodies are JSON.
+                                Errors print Google's error and exit 1; other answers
+                                (exports, alt=media) print as they are
+      -X METHOD                 GET, POST, PUT, PATCH or DELETE
+      -f key=value              a string field: a query parameter on GET and DELETE, a
+                                JSON body field otherwise (a[b]=v nests, a[]=v lists).
+                                fields=, alt= and Google's other standard parameters
+                                always go in the query
+      -F key=value              the same, but true, false, null and numbers keep their
+                                type, and @FILE (@- for stdin) reads the value from FILE
+      --query key=value         a query parameter whatever the method
+                                (supportsAllDrives=true, updateMask=…)
+      --input FILE              the JSON body (- for stdin); -f and -F then go in the
+                                query
+      -H 'Name: value'          an extra header
+      --paginate                follow nextPageToken and join the pages' lists (GETs)
+      --silent                  print nothing on success
 
 Classroom
   goog classroom [class]        what's left to do in your classes (or one, by name, id
@@ -755,6 +780,8 @@ function helpFor(cmd: string): string {
 
 export async function main(argv: string[]) {
   const [cmd, ...rest] = argv;
+  // Its flags are gh api's, so it parses its own (-f isn't --force there).
+  if (cmd === "api") return cmdApi(rest, helpFor("api"));
   const {values: flags, positionals: pos} = parseArgs({
     args: rest,
     allowPositionals: true,

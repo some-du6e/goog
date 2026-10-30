@@ -16,6 +16,7 @@ goog push DOC_ID.goog --type   # same, but new text is typed in at human speed
 goog diff DOC_ID.goog      # what a push would change in the doc
 goog classroom             # Classroom work left to do, with your copy of each doc
 goog transcript VIDEO      # what a YouTube video says, with times
+goog api drive/v3/files/DOC_ID/revisions   # any Google API call, signed in
 goog help                  # everything else
 ```
 
@@ -185,6 +186,43 @@ web player's caption links need a token a script can't make), which takes
 about a second for an hour of video, and uses the uploader's captions when
 there are some. `--lang es` picks another language the video has, and
 `--from 0:00 --to 15:35` keeps just the part a worksheet covers.
+
+## Any API call
+
+`goog api` calls any Google REST API with goog's sign-in and prints the JSON
+answer, like `gh api`:
+
+```sh
+goog api docs/v1/documents/<id> -f fields=title
+goog api drive/v3/files -f q="name contains 'essay'" -f 'fields=files(id,name)' --paginate
+goog api drive/v3/files/<id>/copy -X POST -f name="scratch copy" -f fields=id
+echo '{"requests":[…]}' | goog api docs/v1/documents/<id>:batchUpdate --input -
+goog api drive/v3/files/<id>/export -f mimeType=application/pdf > doc.pdf
+goog api drive/v3/files/<id> -X DELETE
+```
+
+The path is `<service>/<version>/…` (`docs`, `slides`, `drive`, `classroom`,
+`sheets`, `gmail`, …), or a full URL. The token only goes to
+`https://*.googleapis.com`. It's a GET unless `-X` says otherwise, or a POST
+when there's an `--input` body; bodies are JSON, so media uploads aren't
+covered. `-f key=value` is a string and `-F` keeps `true`, `false`, `null`
+and numbers typed and reads `@file`. Both are query parameters on GET and
+DELETE, and body fields (`a[b]=v` nests, `a[]=v` lists) otherwise; with
+`--input`, they go in the query. Unlike `gh api`, fields don't turn a GET
+into a POST: Google's GETs take their options in the query, and a list that
+quietly became a create would make files. `fields=` and Google's other
+standard parameters always go in the query, and `--query key=value` puts any
+other one there (`--query supportsAllDrives=true`). There's no `-q`/`--jq`;
+pipe to `jq`. `-H 'Name: value'` adds a header, and `--silent` prints nothing
+on success. `--paginate` follows a GET's `nextPageToken` and joins the pages'
+lists, adding `nextPageToken` to a `fields=` that leaves it out. A read is
+retried after a 5xx or a lost connection. A write is only sent again when
+Google can't have run it (a 429, a rate limit or an expired sign-in), so a
+create that failed with a 5xx or a lost connection is never made twice. A
+call gets 10 minutes, for slow exports and Apps Script runs, and one that
+runs out isn't retried. Errors print Google's error JSON and exit 1. JSON is
+laid out in a terminal; through a pipe, answers, exports and media are
+written as they come (`--paginate`'s joined pages are always laid out). Binary ones need a redirect.
 
 ## How it writes
 

@@ -30,7 +30,7 @@ const TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 7;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function backoff(attempt: number, retryAfter: string | null, status: number): number {
+export function backoff(attempt: number, retryAfter: string | null, status: number): number {
   const s = Number(retryAfter);
   if (retryAfter && Number.isFinite(s)) return Math.min(s * 1000, 65_000);
   const base = status === 429 ? 4000 : 1000; // quota windows are a minute long
