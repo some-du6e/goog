@@ -43,9 +43,10 @@ function backoff(attempt: number, retryAfter: string | null, status: number): nu
 // opts.raw returns that for every answer, errors included, once retrying is
 // over (for goog api, which shows Google's own error); a write it sends isn't
 // sent again once Google may have run it. opts.headers adds headers;
-// Authorization is always goog's.
-export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean; raw?: boolean; headers?: Record<string, string>; timeoutMs?: number} = {}): Promise<T> {
-  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+// Authorization is always goog's. Google gets a minute to start answering,
+// and opts.bodyTimeoutMs (default a minute too) to finish.
+export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean; raw?: boolean; headers?: Record<string, string>; bodyTimeoutMs?: number} = {}): Promise<T> {
+  const bodyMs = opts.bodyTimeoutMs ?? TIMEOUT_MS;
   const once = opts.raw && method !== "GET";
   let refreshed = false;
   for (let attempt = 0; ; attempt++) {
@@ -53,16 +54,20 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
     const headers = new Headers(opts.headers);
     if (body !== undefined && !headers.has("content-type")) headers.set("Content-Type", "application/json");
     headers.set("Authorization", `Bearer ${token}`);
+    const ac = new AbortController();
+    const timeout = (ms: number) => setTimeout(() => ac.abort(new DOMException(`no answer in ${ms / 1000}s`, "TimeoutError")), ms).unref();
+    let timer = timeout(TIMEOUT_MS);
     let r: Response;
     try {
       r = await fetch(url, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: ac.signal,
       });
     } catch (e: any) {
-      const why = e?.name === "TimeoutError" ? `no answer in ${timeoutMs / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
+      clearTimeout(timer);
+      const why = e?.name === "TimeoutError" ? `no answer in ${TIMEOUT_MS / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
       // A write that timed out may have landed; don't send it twice. Nor any
       // goog api write, unless the connection was never made.
       const unsent = NOT_SENT.has(e?.cause?.code);
@@ -74,15 +79,19 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       }
       throw new ApiError(0, `can't reach Google (${why}); check the network connection`);
     }
+    clearTimeout(timer);
+    timer = timeout(bodyMs);
     const bytes = () => r.arrayBuffer().then((b) => Buffer.from(b), (e: any) => {
-      throw new ApiError(0, e?.name === "TimeoutError" ? `the answer took over ${timeoutMs / 1000}s to come in` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`);
+      throw new ApiError(0, e?.name === "TimeoutError" ? `the answer took over ${bodyMs / 1000}s to come in` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`);
     });
     if (r.ok) {
       if (opts.raw || opts.bytes) return {status: r.status, type: r.headers.get("content-type") ?? "", data: await bytes()} as T;
       if (r.status === 204) return null as T;
       return (opts.text ? await r.text() : await r.json()) as T;
     }
-    const data = await bytes();
+    // An error whose body breaks off is still retried on its status.
+    const data = await bytes().catch(() => Buffer.alloc(0));
+    clearTimeout(timer);
     let j: any = {};
     try {
       j = JSON.parse(data.toString("utf8")) ?? {};

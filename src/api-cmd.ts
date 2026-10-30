@@ -119,7 +119,10 @@ export function parseHeader(h: string): [string, string] {
   if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) throw new Error(`-H takes "Name: value" (got "${h}")`);
   if (/^authorization$/i.test(name)) throw new Error("goog api sends its own Authorization header; goog auth changes the sign-in");
   if (/^(host|content-length|transfer-encoding|connection)$/i.test(name)) throw new Error(`goog api sets ${name} itself`);
+  // It would turn a GET, which goog retries, into a write.
+  if (/^x-http-method(-override)?$/i.test(name)) throw new Error(`use -X instead of -H ${name}`);
   if (/[\0-\x08\x0a-\x1f\x7f]/.test(value)) throw new Error(`the -H ${name} value has a line break or control character in it`);
+  if (/[^\0-\xff]/.test(value)) throw new Error(`the -H ${name} value has characters HTTP headers can't carry; only Latin-1 fits`);
   return [name, value];
 }
 
@@ -208,7 +211,7 @@ export async function cmdApi(args: string[], help: string) {
   const headers = Object.fromEntries((o.header ?? []).map(parseHeader));
   setRetryListener(({message, delayMs}) => io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`));
   // Downloads and exports can be big; there's no reason to cut them off at a minute.
-  const call = () => api<Answer>(method, url.href, body, {raw: true, headers, timeoutMs: 600_000});
+  const call = () => api<Answer>(method, url.href, body, {raw: true, headers, bodyTimeoutMs: 600_000});
 
   if (!o.paginate) return show(await call(), !!o.silent);
 
@@ -226,7 +229,12 @@ export async function cmdApi(args: string[], help: string) {
       if (a.status < 300) throw new Error(`page ${pages.length + 1} came back as ${a.type || "an untyped answer"}, not JSON`);
       return show(a, !!o.silent);
     }
-    const page = JSON.parse(a.data.toString("utf8"));
+    let page: any;
+    try {
+      page = JSON.parse(a.data.toString("utf8"));
+    } catch {
+      throw new Error(`page ${pages.length + 1} isn't valid JSON`);
+    }
     pages.push(page);
     if (pages.length % 10 === 0 && io.stderrTty()) io.err(`goog: ${pages.length} pages so far\n`);
     const token = page?.nextPageToken;

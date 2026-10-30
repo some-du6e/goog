@@ -216,9 +216,10 @@ other one there (`--query supportsAllDrives=true`). There's no `-q`/`--jq`;
 pipe to `jq`. `-H 'Name: value'` adds a header, and `--silent` prints nothing
 on success. `--paginate` follows a GET's `nextPageToken` and joins the pages'
 lists, adding `nextPageToken` to a `fields=` that leaves it out. Reads are
-retried like every other command's; a write is only sent again when Google
-answered 429 or rate-limited it, so a create that failed with a 5xx is never
-made twice. Errors print Google's error JSON and exit 1. Exports and media
+retried like every other command's. A write is only sent again when Google
+can't have run it (a 429 or rate limit, an expired sign-in, or a connection
+that never opened), so a create that failed with a 5xx or a dropped
+connection is never made twice. Errors print Google's error JSON and exit 1. Exports and media
 are written as they come; binary ones need a redirect.
 
 ## How it writes

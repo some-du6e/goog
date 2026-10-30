@@ -78,11 +78,17 @@ test("headers", () => {
   assert.throws(() => parseHeader("X-A: a\r\nB: c"), /line break/);
   assert.throws(() => parseHeader("Content-Length: 3"), /sets Content-Length itself/);
   assert.throws(() => parseHeader("host: evil.com"), /sets host itself/);
+  assert.throws(() => parseHeader("Transfer-Encoding: chunked"), /sets Transfer-Encoding itself/);
+  assert.throws(() => parseHeader("connection: close"), /sets connection itself/);
+  assert.throws(() => parseHeader("X-HTTP-Method-Override: DELETE"), /use -X instead/);
+  assert.throws(() => parseHeader("X-Note: café ☃"), /only Latin-1 fits/);
+  assert.deepEqual(parseHeader("X-Note: café"), ["X-Note", "café"]);
 });
 
 test("pages join their lists", () => {
   assert.deepEqual(mergePages([{kind: "k", files: [1, 2], nextPageToken: "t"}, {kind: "k2", files: [3], incompleteSearch: true}]), {kind: "k", files: [1, 2, 3], incompleteSearch: true});
   assert.deepEqual(mergePages([{files: []}]), {files: []});
+  assert.deepEqual(mergePages([{a: [1]}, {constructor: "c", a: [2]}]), {a: [1, 2], constructor: "c"});
 });
 
 const bin = new URL("../bin/goog.ts", import.meta.url).pathname;
@@ -128,7 +134,7 @@ test("goog api --help shows its part of the help", () => {
 
 // Each call to the stub takes the next answer and records the request.
 type Sent = {method: string; url: URL; body: any; headers: Headers};
-async function run(args: string[], answers: Response[], opts: {tty?: boolean} = {}) {
+async function run(args: string[], answers: (Response | Error)[], opts: {tty?: boolean} = {}) {
   const sent: Sent[] = [];
   let stdout = "";
   let stderr = "";
@@ -137,6 +143,7 @@ async function run(args: string[], answers: Response[], opts: {tty?: boolean} = 
     sent.push({method: init.method, url: new URL(String(url)), body: init.body === undefined ? undefined : JSON.parse(init.body), headers: new Headers(init.headers)});
     const a = answers.shift();
     if (!a) throw new Error(`unexpected fetch ${url}`);
+    if (a instanceof Error) throw a;
     return a;
   }) as typeof fetch;
   io.out = (c) => void (stdout += Buffer.isBuffer(c) ? c.toString("latin1") : c);
@@ -213,6 +220,12 @@ test("--paginate stops on a failed page, a non-JSON page, or a repeated token", 
   const html = await run(["drive/v3/files", "--paginate"], [json({files: [1], nextPageToken: "t"}), new Response("<html>x</html>", {headers: {"content-type": "text/html"}})]);
   assert.match(html.error ?? "", /page 2 came back as text\/html, not JSON/);
   assert.equal(html.stdout, "");
+  const bad = await run(["drive/v3/files", "--paginate"], [json({files: [1], nextPageToken: "t"}), new Response("", {headers: {"content-type": "application/json"}})]);
+  assert.equal(bad.error, "page 2 isn't valid JSON");
+  // A first page that isn't JSON is just shown.
+  const first = await run(["drive/v3/files/a/export", "--paginate"], [new Response("text", {headers: {"content-type": "text/plain"}})]);
+  assert.equal(first.error, undefined);
+  assert.equal(first.stdout, "text");
   const loop = await run(["drive/v3/files", "--paginate"], [json({nextPageToken: "t"}), json({nextPageToken: "t"})]);
   assert.match(loop.error ?? "", /page token t twice; stopping after 2 pages/);
 });
@@ -251,4 +264,39 @@ test("goog api retries a read but never resends a write Google may have run", as
   const limited = await run(["drive/v3/files/a/copy", "-X", "POST"], [json({error: {code: 429, message: "slow down"}}, 429, {"retry-after": "0"}), json({id: "b"})]);
   assert.equal(limited.error, undefined);
   assert.equal(limited.sent.length, 2);
+});
+
+test("a write is resent after a connection that never opened, but not after one that dropped", async () => {
+  const lost = (code: string) => Object.assign(new TypeError("fetch failed"), {cause: {code}});
+  const reset = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNRESET")]);
+  assert.match(reset.error ?? "", /can't reach Google \(ECONNRESET\)/);
+  assert.equal(reset.sent.length, 1);
+  const refused = await run(["drive/v3/files/a/copy", "-X", "POST"], [lost("ECONNREFUSED"), json({id: "b"})]);
+  assert.equal(refused.error, undefined);
+  assert.equal(refused.sent.length, 2);
+  const read = await run(["drive/v3/files/a"], [lost("ECONNRESET"), json({id: "a"})]);
+  assert.equal(read.error, undefined);
+  assert.equal(read.sent.length, 2);
+});
+
+// A body that errors partway through.
+const broken = (status: number, headers: Record<string, string> = {}) => new Response(new ReadableStream({
+  pull: (c) => c.error(Object.assign(new TypeError("terminated"), {cause: {code: "UND_ERR_SOCKET"}})),
+}), {status, headers: {"content-type": "application/json", ...headers}});
+
+test("an answer that breaks off partway says so; an error that does is still retried", async () => {
+  const r = await run(["drive/v3/files/a"], [broken(200)]);
+  assert.equal(r.error, "the connection broke during the answer (UND_ERR_SOCKET)");
+  // Every command's api() call, not just goog api's.
+  const {api} = await import("../src/google.ts");
+  const real = globalThis.fetch;
+  const answers = [broken(503, {"retry-after": "0"}), json({ok: true})];
+  let calls = 0;
+  globalThis.fetch = (async () => (calls++, answers.shift()!)) as typeof fetch;
+  try {
+    assert.deepEqual(await api("GET", "https://docs.googleapis.com/v1/documents/x"), {ok: true});
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
