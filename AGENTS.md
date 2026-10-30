@@ -49,9 +49,8 @@ Done means `npm test` and `npm run typecheck` both pass.
   docs. Live runs use up the shared per-minute write quota, so reuse one doc
   for ad-hoc probes.
 - Delete throwaway docs for good with `DELETE drive/v3/files/<id>`
-  (`goog api drive/v3/files/<id> -X DELETE`), the way
-  plan-live.ts does. Trashing them fills the user's Drive trash; one run left
-  619 docs there.
+  (`goog api drive/v3/files/<id> -X DELETE`), the way plan-live.ts does.
+  Trashing them fills the user's Drive trash; one run left 619 docs there.
 
 ## Docs API ground truth
 
@@ -65,6 +64,10 @@ Done means `npm test` and `npm run typecheck` both pass.
 - Chip inserts reply `{}`. `adoptNew` picks up their ids after the refetch.
 - `deleteTab` deletes the tab's child tabs too, so the planner never deletes a
   tab whose children the file keeps.
+
+- Standard parameters (`fields`, `alt`, …) in a JSON body are ignored: a
+  copy with `{"fields":"id"}` in its body answers with every default field.
+  They go in the query (`SYSTEM` in api-cmd.ts).
 
 ## Slides API ground truth
 

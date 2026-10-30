@@ -82,9 +82,10 @@ Any API call
                                 answer, like gh api. <path> is <service>/<version>/…
                                 (docs/v1/documents/ID, slides/v1/presentations/ID,
                                 drive/v3/files, classroom/v1/courses) or a full
-                                https://*.googleapis.com URL. GET unless --input is
-                                given. Errors print Google's error and exit 1; other
-                                answers (exports, alt=media) print as they are
+                                https://*.googleapis.com URL. A GET unless -X says
+                                otherwise, or a POST with --input. Bodies are JSON.
+                                Errors print Google's error and exit 1; other answers
+                                (exports, alt=media) print as they are
       -X METHOD                 GET, POST, PUT, PATCH or DELETE
       -f key=value              a string field: a query parameter on GET and DELETE, a
                                 JSON body field otherwise (a[b]=v nests, a[]=v lists).
@@ -92,12 +93,12 @@ Any API call
                                 always go in the query
       -F key=value              the same, but true, false, null and numbers keep their
                                 type, and @FILE (@- for stdin) reads the value from FILE
-      -q key=value              a query parameter whatever the method
+      --query key=value         a query parameter whatever the method
                                 (supportsAllDrives=true, updateMask=…)
       --input FILE              the JSON body (- for stdin); -f and -F then go in the
                                 query
       -H 'Name: value'          an extra header
-      --paginate                follow nextPageToken and join the pages' lists
+      --paginate                follow nextPageToken and join the pages' lists (GETs)
       --silent                  print nothing on success
 
 Classroom

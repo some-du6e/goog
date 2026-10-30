@@ -10,10 +10,12 @@ import {readFileSync} from "node:fs";
 import {parseArgs} from "node:util";
 import {api, setRetryListener} from "./google.ts";
 
-export const API_USAGE = "goog api <path> [-X METHOD] [-f key=value] [-F key=value] [-q key=value] [--input FILE] [-H 'Name: value'] [--paginate] [--silent]";
+const API_USAGE = "goog api <path> [-X METHOD] [-f key=value] [-F key=value] [--query key=value] [--input FILE] [-H 'Name: value'] [--paginate] [--silent]";
 
 // Services Google serves from www.googleapis.com/<service>/<version>/…
-const WWW = new Set(["drive", "upload", "calendar", "oauth2", "youtube", "tasks", "batch"]);
+const WWW = new Set(["drive", "calendar", "oauth2", "youtube", "tasks"]);
+// Services whose own host keeps their name in the path: gmail.googleapis.com/gmail/v1/…
+const NAMED = new Set(["gmail", "storage", "bigquery", "admin", "compute", "dns", "androidpublisher"]);
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 // Google's standard parameters: never part of a body, so -f sends them in the query.
 const SYSTEM = new Set(["fields", "alt", "prettyPrint", "quotaUser", "uploadType", "upload_protocol", "$.xgafv"]);
@@ -32,7 +34,7 @@ export function apiUrl(path: string): URL {
     if (svc.includes(".")) url = new URL(`https://${clean}`);
     else {
       if (!/^[a-z0-9-]+$/.test(svc) || !rest) throw new Error(`"${path}" isn't an API path; write <service>/<version>/…, like docs/v1/documents/<id> or drive/v3/files`);
-      url = new URL(WWW.has(svc) ? `https://www.googleapis.com/${svc}/${rest}` : `https://${svc}.googleapis.com/${rest}`);
+      url = new URL(WWW.has(svc) ? `https://www.googleapis.com/${svc}/${rest}` : `https://${svc}.googleapis.com/${NAMED.has(svc) ? `${svc}/` : ""}${rest}`);
     }
   }
   if (/^(docs|drive|classroom)\.google\.com$/.test(url.hostname)) {
@@ -47,22 +49,15 @@ export function apiUrl(path: string): URL {
 
 type Field = {key: string; value: unknown};
 
-// -f key=value and -F key=value, in the order given.
-export function parseFields(raw: string[], typed: string[], readFile: (f: string) => string, rawFlag = "-f"): Field[] {
-  const split = (s: string, flag: string) => {
-    const eq = s.indexOf("=");
-    if (eq < 1) throw new Error(`${flag} takes key=value (got "${s}")`);
-    return [s.slice(0, eq), s.slice(eq + 1)];
-  };
-  const fields: Field[] = raw.map((s) => {
-    const [key, value] = split(s, rawFlag);
-    return {key, value};
-  });
-  for (const s of typed) {
-    const [key, v] = split(s, "-F");
-    fields.push({key, value: typedValue(v, readFile)});
-  }
-  return fields;
+export function keyValue(s: string, flag: string): {key: string; value: string} {
+  const eq = s.indexOf("=");
+  if (eq < 1) throw new Error(`${flag} takes key=value (got "${s}")`);
+  return {key: s.slice(0, eq), value: s.slice(eq + 1)};
+}
+
+// -f key=value, then -F key=value.
+export function parseFields(raw: string[], typed: string[], readFile: (f: string) => string): Field[] {
+  return [...raw.map((s) => keyValue(s, "-f")), ...typed.map((s) => keyValue(s, "-F")).map((f) => ({...f, value: typedValue(f.value, readFile)}))];
 }
 
 function typedValue(v: string, readFile: (f: string) => string): unknown {
@@ -120,9 +115,12 @@ function addQuery(url: URL, fields: Field[]) {
 export function parseHeader(h: string): [string, string] {
   const colon = h.indexOf(":");
   const name = colon < 0 ? "" : h.slice(0, colon).trim();
+  const value = h.slice(colon + 1).trim();
   if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) throw new Error(`-H takes "Name: value" (got "${h}")`);
   if (/^authorization$/i.test(name)) throw new Error("goog api sends its own Authorization header; goog auth changes the sign-in");
-  return [name, h.slice(colon + 1).trim()];
+  if (/^(host|content-length|transfer-encoding|connection)$/i.test(name)) throw new Error(`goog api sets ${name} itself`);
+  if (/[\0-\x08\x0a-\x1f\x7f]/.test(value)) throw new Error(`the -H ${name} value has a line break or control character in it`);
+  return [name, value];
 }
 
 // Joins the lists of each page into the first page.
@@ -131,7 +129,7 @@ export function mergePages(pages: any[]): any {
   for (const p of pages.slice(1)) {
     for (const [k, v] of Object.entries(p)) {
       if (Array.isArray(v) && Array.isArray(all[k])) all[k] = [...all[k], ...v];
-      else if (!(k in all)) all[k] = v;
+      else if (!Object.hasOwn(all, k)) all[k] = v;
     }
   }
   delete all.nextPageToken;
@@ -139,11 +137,19 @@ export function mergePages(pages: any[]): any {
 }
 
 type Answer = {status: number; type: string; data: Buffer};
+// Where it prints; the tests swap these.
+export const io = {
+  out: (c: string | Buffer) => void process.stdout.write(c),
+  err: (s: string) => void process.stderr.write(s),
+  tty: () => !!process.stdout.isTTY,
+  stderrTty: () => !!process.stderr.isTTY,
+};
 const isJson = (type: string) => /[/+]json\b/i.test(type);
 const isText = (type: string) => /^text\/|[/+](xml|csv)\b|charset=/i.test(type);
 
 export async function cmdApi(args: string[], help: string) {
   if (args.includes("--json")) throw new Error("goog api always prints JSON; leave out --json");
+  if (args.some((a) => a === "-q" || a === "--jq" || a.startsWith("--jq="))) throw new Error("goog api has no --jq; pipe it to jq (goog api … | jq .title). --query key=value adds a query parameter");
   const {values: o, positionals: pos} = parseArgs({
     args,
     allowPositionals: true,
@@ -151,7 +157,7 @@ export async function cmdApi(args: string[], help: string) {
       method: {type: "string", short: "X"},
       "raw-field": {type: "string", short: "f", multiple: true},
       field: {type: "string", short: "F", multiple: true},
-      query: {type: "string", short: "q", multiple: true},
+      query: {type: "string", multiple: true},
       header: {type: "string", short: "H", multiple: true},
       input: {type: "string"},
       paginate: {type: "boolean"},
@@ -159,17 +165,17 @@ export async function cmdApi(args: string[], help: string) {
       help: {type: "boolean", short: "h"},
     },
   });
-  if (o.help) return void process.stdout.write(help + "\n");
+  if (o.help) return void io.out(help + "\n");
   if (pos.length !== 1) throw new Error(`${pos.length ? "goog api takes one path (quote a URL with ? or & in it)" : "goog api needs a path"}\nusage: ${API_USAGE}`);
   const url = apiUrl(pos[0]);
 
   let stdinUsed = false;
   const read = (f: string, what: string) => {
+    if (!f) throw new Error(`${what} needs a file name, or - for stdin`);
     if (f === "-") {
       if (stdinUsed) throw new Error("only one of --input and -F …=@- can read stdin");
       stdinUsed = true;
     }
-    if (!f) throw new Error(`${what} needs a file name, or - for stdin`);
     try {
       return readFileSync(f === "-" ? 0 : f, "utf8");
     } catch (e: any) {
@@ -178,16 +184,17 @@ export async function cmdApi(args: string[], help: string) {
   };
   const all = parseFields(o["raw-field"] ?? [], o.field ?? [], (f) => read(f, "-F"));
   const fields = all.filter((f) => !SYSTEM.has(f.key));
-  addQuery(url, [...all.filter((f) => SYSTEM.has(f.key)), ...parseFields(o.query ?? [], [], () => "", "-q")]);
+  addQuery(url, [...all.filter((f) => SYSTEM.has(f.key)), ...(o.query ?? []).map((s) => keyValue(s, "--query"))]);
 
   let body: unknown;
   if (o.input !== undefined) {
+    const src = o.input === "-" ? "stdin" : o.input;
     const text = read(o.input, "--input");
-    if (!text.trim()) throw new Error(`--input ${o.input} is empty`);
+    if (!text.trim()) throw new Error(`--input ${src} is empty`);
     try {
       body = JSON.parse(text);
     } catch (e: any) {
-      throw new Error(`--input ${o.input === "-" ? "(stdin)" : o.input} isn't JSON: ${e.message}`);
+      throw new Error(`--input ${src} isn't JSON: ${e.message}`);
     }
   }
   const method = (o.method ?? (body === undefined ? "GET" : "POST")).toUpperCase();
@@ -199,9 +206,11 @@ export async function cmdApi(args: string[], help: string) {
   if (o.paginate && method !== "GET") throw new Error("--paginate only follows GETs");
 
   const headers = Object.fromEntries((o.header ?? []).map(parseHeader));
-  setRetryListener(({message, delayMs}) => process.stderr.write(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`));
+  setRetryListener(({message, delayMs}) => io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`));
+  // Downloads and exports can be big; there's no reason to cut them off at a minute.
+  const call = () => api<Answer>(method, url.href, body, {raw: true, headers, timeoutMs: 600_000});
 
-  if (!o.paginate) return show(await api<Answer>(method, url.href, body, {raw: true, headers}), !!o.silent);
+  if (!o.paginate) return show(await call(), !!o.silent);
 
   // A fields= that leaves nextPageToken out would stop at the first page.
   const f = url.searchParams.get("fields");
@@ -209,24 +218,28 @@ export async function cmdApi(args: string[], help: string) {
   const pages: any[] = [];
   const seen = new Set<string>();
   for (;;) {
-    const a = await api<Answer>("GET", url.href, undefined, {raw: true, headers});
+    const a = await call();
     if (a.status >= 300 || !isJson(a.type)) {
-      if (pages.length) process.stderr.write(`goog: page ${pages.length + 1} failed; the ${pages.length} before it are left out\n`);
+      // The first page can be anything; a later one that isn't JSON is a failure too.
+      if (!pages.length) return show(a, !!o.silent);
+      io.err(`goog: page ${pages.length + 1} failed; the ${pages.length} before it are left out\n`);
+      if (a.status < 300) throw new Error(`page ${pages.length + 1} came back as ${a.type || "an untyped answer"}, not JSON`);
       return show(a, !!o.silent);
     }
     const page = JSON.parse(a.data.toString("utf8"));
     pages.push(page);
-    if (pages.length % 10 === 0 && process.stderr.isTTY) process.stderr.write(`goog: ${pages.length} pages so far\n`);
+    if (pages.length % 10 === 0 && io.stderrTty()) io.err(`goog: ${pages.length} pages so far\n`);
     const token = page?.nextPageToken;
     if (typeof token !== "string" || !token) break;
     if (seen.has(token)) throw new Error(`Google sent page token ${token} twice; stopping after ${pages.length} pages`);
     seen.add(token);
     url.searchParams.set("pageToken", token);
   }
-  return show({status: 200, type: "application/json", data: Buffer.from(JSON.stringify(mergePages(pages)))}, !!o.silent);
+  if (!o.silent) io.out(JSON.stringify(mergePages(pages), null, 2) + "\n");
 }
 
-function show(a: Answer, silent: boolean) {
+// Prints an answer; throws for an error, after printing Google's JSON error.
+export function show(a: Answer, silent: boolean) {
   const ok = a.status < 300;
   let parsed: any;
   if (isJson(a.type) || (!a.type && a.data.length)) {
@@ -235,17 +248,17 @@ function show(a: Answer, silent: boolean) {
     } catch {}
   }
   if (ok && !silent) {
-    if (parsed !== undefined) process.stdout.write(JSON.stringify(parsed, null, 2) + "\n");
+    if (parsed !== undefined) io.out(JSON.stringify(parsed, null, 2) + "\n");
     else if (!a.data.length) {
       // 204 and empty answers print nothing.
-    } else if (isText(a.type) || isJson(a.type)) process.stdout.write(a.data);
-    else if (process.stdout.isTTY) {
+    } else if (isText(a.type) || isJson(a.type)) io.out(a.data);
+    else if (io.tty()) {
       throw new Error(`the answer is ${a.type || "binary"} (${a.data.length} bytes); redirect it to a file: goog api … > file`);
-    } else process.stdout.write(a.data);
+    } else io.out(a.data);
   }
   if (ok) return;
   // Google's JSON error goes to stdout, as gh does; an HTML error page would only be noise.
-  if (parsed !== undefined) process.stdout.write(JSON.stringify(parsed, null, 2) + "\n");
+  if (parsed !== undefined) io.out(JSON.stringify(parsed, null, 2) + "\n");
   const text = a.data.toString("utf8");
   const msg = parsed?.error?.message
     ?? (/html/i.test(a.type) ? /<title>([^<]*)<\/title>/i.exec(text)?.[1]?.trim() : isText(a.type) ? text.trim().slice(0, 300) : undefined)

@@ -28,6 +28,8 @@ export function setRetryListener(fn: RetryListener | undefined) {
 
 const TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 7;
+// Connection errors that mean the request never left this machine.
+const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function backoff(attempt: number, retryAfter: string | null, status: number): number {
@@ -37,25 +39,34 @@ function backoff(attempt: number, retryAfter: string | null, status: number): nu
   return Math.min(base * 2 ** attempt, 32_000) * (0.75 + Math.random() * 0.5);
 }
 
-// opts.text returns the body as a string, opts.bytes as {type, data}.
-// opts.raw returns {status, type, data} for every answer, errors included,
-// once retrying is over (for goog api, which shows Google's own error).
-export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean; raw?: boolean; headers?: Record<string, string>} = {}): Promise<T> {
+// opts.text returns the body as a string, opts.bytes as {status, type, data}.
+// opts.raw returns that for every answer, errors included, once retrying is
+// over (for goog api, which shows Google's own error); a write it sends isn't
+// sent again once Google may have run it. opts.headers adds headers;
+// Authorization is always goog's.
+export async function api<T = any>(method: string, url: string, body?: unknown, opts: {text?: boolean; bytes?: boolean; raw?: boolean; headers?: Record<string, string>; timeoutMs?: number} = {}): Promise<T> {
+  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+  const once = opts.raw && method !== "GET";
   let refreshed = false;
   for (let attempt = 0; ; attempt++) {
     const token = await getToken();
+    const headers = new Headers(opts.headers);
+    if (body !== undefined && !headers.has("content-type")) headers.set("Content-Type", "application/json");
+    headers.set("Authorization", `Bearer ${token}`);
     let r: Response;
     try {
       r = await fetch(url, {
         method,
-        headers: {...(body === undefined ? {} : {"Content-Type": "application/json"}), ...opts.headers, Authorization: `Bearer ${token}`},
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e: any) {
-      const why = e?.name === "TimeoutError" ? `no answer in ${TIMEOUT_MS / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
-      // A write that timed out may have landed; don't send it twice.
-      if (attempt < 3 && (method === "GET" || e?.name !== "TimeoutError")) {
+      const why = e?.name === "TimeoutError" ? `no answer in ${timeoutMs / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
+      // A write that timed out may have landed; don't send it twice. Nor any
+      // goog api write, unless the connection was never made.
+      const unsent = NOT_SENT.has(e?.cause?.code);
+      if (attempt < 3 && (method === "GET" || e?.name !== "TimeoutError") && (!once || unsent)) {
         const delayMs = 1000 * 2 ** attempt;
         onRetry?.({status: 0, message: `can't reach Google (${why})`, delayMs, attempt});
         await sleep(delayMs);
@@ -63,13 +74,15 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       }
       throw new ApiError(0, `can't reach Google (${why}); check the network connection`);
     }
-    if (opts.raw && r.ok) return {status: r.status, type: r.headers.get("content-type") ?? "", data: Buffer.from(await r.arrayBuffer())} as T;
+    const bytes = () => r.arrayBuffer().then((b) => Buffer.from(b), (e: any) => {
+      throw new ApiError(0, e?.name === "TimeoutError" ? `the answer took over ${timeoutMs / 1000}s to come in` : `the connection broke during the answer (${e?.cause?.code ?? e?.message})`);
+    });
     if (r.ok) {
+      if (opts.raw || opts.bytes) return {status: r.status, type: r.headers.get("content-type") ?? "", data: await bytes()} as T;
       if (r.status === 204) return null as T;
-      if (opts.bytes) return {type: r.headers.get("content-type") ?? "", data: Buffer.from(await r.arrayBuffer())} as T;
       return (opts.text ? await r.text() : await r.json()) as T;
     }
-    const data = Buffer.from(await r.arrayBuffer());
+    const data = await bytes();
     let j: any = {};
     try {
       j = JSON.parse(data.toString("utf8")) ?? {};
@@ -81,7 +94,8 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
       forgetToken();
       continue;
     }
-    if ((r.status === 429 || r.status >= 500 || /rate ?limit/i.test(reason ?? "")) && attempt < MAX_ATTEMPTS - 1) {
+    // A 5xx may come after the work was done; 429 and rate limits mean it wasn't.
+    if ((r.status === 429 || (r.status >= 500 && !once) || /rate ?limit/i.test(reason ?? "")) && attempt < MAX_ATTEMPTS - 1) {
       const delayMs = backoff(attempt, r.headers.get("retry-after"), r.status);
       onRetry?.({status: r.status, message: r.status === 429 ? "Google rate limit" : `Google error ${r.status}: ${msg}`, delayMs, attempt});
       await sleep(delayMs);

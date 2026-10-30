@@ -16,6 +16,7 @@ goog push DOC_ID.goog --type   # same, but new text is typed in at human speed
 goog diff DOC_ID.goog      # what a push would change in the doc
 goog classroom             # Classroom work left to do, with your copy of each doc
 goog transcript VIDEO      # what a YouTube video says, with times
+goog api drive/v3/files/DOC_ID/revisions   # any Google API call, signed in
 goog help                  # everything else
 ```
 
@@ -201,19 +202,24 @@ goog api drive/v3/files/<id> -X DELETE
 ```
 
 The path is `<service>/<version>/…` (`docs`, `slides`, `drive`, `classroom`,
-`sheets`, …), or a full URL. The token only goes to `https://*.googleapis.com`.
-It's a GET unless there's an `--input` body. `-f key=value` is a string and
-`-F` keeps `true`, `false`, `null` and numbers typed and reads `@file`. Both
-are query parameters on GET and DELETE, and body fields (`a[b]=v` nests,
-`a[]=v` lists) otherwise. Unlike `gh api`, fields don't turn a GET into a
-POST: Google's GETs take their options in the query, and a list that quietly
-became a create would make files. `fields=` and Google's other standard
-parameters always go in the query, and `-q key=value` puts any other one
-there (`-q supportsAllDrives=true`). `--paginate` follows `nextPageToken` and
-joins the pages' lists, adding `nextPageToken` to a `fields=` that leaves it
-out. Retries and rate-limit waits are the same as every other command's.
-Errors print Google's error JSON and exit 1. Exports and media are written as
-they come; binary ones need a redirect.
+`sheets`, `gmail`, …), or a full URL. The token only goes to
+`https://*.googleapis.com`. It's a GET unless `-X` says otherwise, or a POST
+when there's an `--input` body; bodies are JSON, so media uploads aren't
+covered. `-f key=value` is a string and `-F` keeps `true`, `false`, `null`
+and numbers typed and reads `@file`. Both are query parameters on GET and
+DELETE, and body fields (`a[b]=v` nests, `a[]=v` lists) otherwise; with
+`--input`, they go in the query. Unlike `gh api`, fields don't turn a GET
+into a POST: Google's GETs take their options in the query, and a list that
+quietly became a create would make files. `fields=` and Google's other
+standard parameters always go in the query, and `--query key=value` puts any
+other one there (`--query supportsAllDrives=true`). There's no `-q`/`--jq`;
+pipe to `jq`. `-H 'Name: value'` adds a header, and `--silent` prints nothing
+on success. `--paginate` follows a GET's `nextPageToken` and joins the pages'
+lists, adding `nextPageToken` to a `fields=` that leaves it out. Reads are
+retried like every other command's; a write is only sent again when Google
+answered 429 or rate-limited it, so a create that failed with a 5xx is never
+made twice. Errors print Google's error JSON and exit 1. Exports and media
+are written as they come; binary ones need a redirect.
 
 ## How it writes
 
