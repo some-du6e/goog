@@ -299,7 +299,7 @@ const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
 async function cmdAuth(args: string[], manual = false) {
   // `goog auth <url>`, with "script" left out, means the broker.
-  if (/^https?:/.test(args[0] ?? "")) args = ["script", ...args];
+  if (/^https?:/i.test(args[0] ?? "")) args = ["script", ...args];
   const [sub, arg] = args;
   if (!sub || sub === "status") {
     out(`goog auth: ${authStatus()}`);
@@ -376,11 +376,14 @@ No template: goog auth script --manual.`);
     }
     // The URL works like a password, so it can come from a file (or stdin, as
     // "-") and stay out of the command line and the agent's transcript.
-    let url = arg.trim();
+    // A phone may capitalise the paste; the scheme and host don't care, the
+    // deployment id does.
+    const tidy = (u: string) => u.trim().replace(/^https?:\/\/[^/]*/i, (origin) => origin.toLowerCase());
+    let url = tidy(arg);
     if (url === "-" && process.stdin.isTTY) throw new Error("goog auth script - reads the URL from stdin; pipe it in");
     if (!/^https?:/.test(url)) {
       try {
-        url = readFileSync(url === "-" ? 0 : url, "utf8").trim();
+        url = tidy(readFileSync(url === "-" ? 0 : url, "utf8"));
       } catch (e: any) {
         // Not quoting it: it may be the URL, mistyped.
         if (e.code !== "ENOENT") throw new Error(`couldn't read that file (${e.code ?? "unknown error"})`);
