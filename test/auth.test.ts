@@ -88,10 +88,13 @@ test("a broker from before doPost still hands out its token to a GET", async () 
 
 test("a broker deployed for Only myself is asked again through Chrome, after one request", async () => {
   // JSON on the sign-in page: only the redirect check can send this to Chrome.
-  const asked = await withBroker("https://accounts.google.com/v3/signin/identifier", () => JSON.stringify({token: "not-this"}), () =>
-    assert.rejects(getToken(), /no Chrome at/),
-  );
-  assert.deepEqual(asked, ["POST"]);
+  // With no Chrome, the error names the fix that needs none.
+  for (const signIn of ["https://accounts.google.com/v3/signin/identifier", "https://login.microsoftonline.com/school/saml2"]) {
+    const asked = await withBroker(signIn, () => JSON.stringify({token: "not-this"}), () =>
+      assert.rejects(getToken(), /isn't deployed for Anyone: redeploy it with Who has access: Anyone/),
+    );
+    assert.deepEqual(asked, ["POST"]);
+  }
 });
 
 test("a broker that answers with no token says so, without quoting its URL or going to Chrome", async () => {
@@ -103,7 +106,7 @@ test("a broker that answers with no token says so, without quoting its URL or go
 
 test("a failed request's error quotes neither the URL nor a call log's cookies", async () => {
   // The shape of a Playwright error: the URL in the message, then every header.
-  const leaky = `apiRequestContext.fetch: Timeout exceeded at ${BROKER}\nCall log:\n  → POST ${BROKER}\n    cookie: SID=sessioncookie\n  ← 302\n    location: https://script.googleusercontent.com/macros/echo?user_content_key=k`;
+  const leaky = `apiRequestContext.fetch: Timeout exceeded at ${BROKER} after https://script.googleusercontent.com/macros/echo?user_content_key=k\nCall log:\n  → POST ${BROKER}\n    cookie: SID=sessioncookie\n  ← 302\n    location: https://script.googleusercontent.com/macros/echo?user_content_key=k`;
   await withBroker(echo, () => {
     throw new Error(leaky);
   }, () => assert.rejects(getToken(), (e: any) => /Timeout exceeded/.test(e.message) && !/SECRET|sessioncookie|user_content_key/.test(e.message)));

@@ -336,11 +336,12 @@ ${BROKER_SOURCE}
 ${JSON.stringify(BROKER_MANIFEST, null, 2)}
 
 4. Deploy → New deployment → the gear → Web app. Who has access: Anyone.
-   Deploy, then Authorize access → Advanced → Go to (the project) (unsafe) →
+   Deploy, then Authorize access → Advanced → Go to Untitled project (unsafe) →
    Select all → Continue.
 5. Copy the Web app URL (ending in /exec) and send it back.
 
-Then get the URL to goog as \`goog auth script\` describes.`);
+The URL works like a password: ask for it through a secret-input tool if you
+have one, then run goog auth script <the file it's in, or - for stdin>.`);
       return;
     }
     if (!arg) {
