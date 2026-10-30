@@ -114,6 +114,28 @@ Observed live; the code depends on each:
   `goog api drive/v3/files/<id>/copy -X POST -f fields=id`) and
   delete it for good afterwards, as with docs.
 
+## Apps Script broker ground truth
+
+`goog auth script` depends on each of these, observed live:
+
+- A web app deployed "execute as me, access Anyone" answers without cookies;
+  "Only myself" redirects a cookieless request to accounts.google.com.
+- A POST to `/exec` answers 302 to `script.googleusercontent.com`, which
+  fetch follows as a GET and which carries doPost's output. A doGet-only
+  deployment answers POST with an HTML error page.
+- Google indexes `script.googleusercontent.com` pages, so the template only
+  hands out the token to POST (`BROKER_SOURCE`).
+- The script's hidden Cloud project only enables an API that the manifest
+  lists as an advanced service. Apps Script has no Forms service, so Forms
+  answers 403 "has not been used in project". Its Apps Script API can't be
+  enabled either, so a script can't deploy itself.
+- Apps Script projects have no `/copy` link; Sheets do, and copying a Sheet
+  copies its bound script. Deployments aren't copied.
+- Signed in to several Google accounts, the editor often fails to open
+  ("unable to open the file") for any but the first; a private window works.
+- clasp's OAuth client is refused ("This app is blocked") for drive and
+  gmail scopes, so it can't stand in for a broker.
+
 ## The user's docs and auth
 
 - The scratch doc `18C0ykVGzbSM5BZMq9m9PrMwpxp7qMBn-H2Z6NyB7Tbg` belongs to

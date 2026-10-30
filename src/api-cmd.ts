@@ -360,7 +360,7 @@ function show(a: Answer, silent: boolean, method = "GET") {
   const msg = parsed?.error?.message
     ?? (/html/i.test(a.type) ? /<title>([^<]*)<\/title>/i.exec(text)?.[1]?.trim() : isText(a.type) ? text.trim().slice(0, 300) : undefined)
     ?? "";
-  const hint = a.status === 401 ? "; run goog auth to sign in again"
+  const hint = a.status === 401 ? "; sign in again with goog auth script"
     : a.status === 403 && /scope/i.test(msg) ? "; the token's scopes don't cover this API (goog auth status)"
     // A write isn't resent after a 5xx (see request()), but it may have run.
     : a.status >= 500 && method !== "GET" ? "; the write may still have gone through"

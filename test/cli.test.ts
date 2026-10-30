@@ -151,3 +151,30 @@ test("goog pics: times out with exit 3, and lists the pictures once they're draw
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no pictures yet; goog pull/);
 });
+
+test("auth script: prints the template steps, or the script with --manual", () => {
+  const steps = goog("auth", "script");
+  assert.equal(steps.status, 0);
+  assert.match(steps.stdout, /spreadsheets\/d\/[\w-]+\/copy/);
+  assert.match(steps.stdout, /secret/);
+  const manual = goog("auth", "script", "--manual");
+  assert.equal(manual.status, 0);
+  assert.match(manual.stdout, /function doPost\(\)/);
+  assert.match(manual.stdout, /"access": "ANYONE_ANONYMOUS"/);
+  assert.doesNotMatch(manual.stdout, /copy#/);
+});
+
+test("auth script: refuses what isn't an /exec URL without quoting it or saving anything", () => {
+  const secret = "script.google.com/macros/s/AKfycbSECRET/exec"; // the scheme lost in a paste
+  for (const r of [
+    goog("auth", "script", secret),
+    goog("auth", "script", "https://example.com/x"),
+    spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "not a url\n"}),
+  ]) {
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stderr, /SECRET/);
+  }
+  writeFileSync(join(tmp, "url.txt"), "https://example.com/x\n");
+  assert.match(goog("auth", "script", "url.txt").stderr, /isn't an Apps Script web app URL/);
+  assert.equal(existsSync(join(tmp, "config", "config.json")), false);
+});

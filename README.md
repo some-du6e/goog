@@ -244,19 +244,23 @@ you fix them.
 - `goog auth import token.json`: reuse a refresh token another tool already
   has (a google-auth `authorized_user` file). Its scopes need `drive`, and
   `goog classroom` needs `classroom.courses.readonly` and
-  `classroom.coursework.me.readonly` (or `classroom.coursework.me`), plus
-  `classroom.courseworkmaterials.readonly` for class materials.
+  `classroom.coursework.me.readonly` (or `classroom.coursework.me`).
 - `goog auth script`: an Apps Script web app in your own Drive returns an
   OAuth token. No Google Cloud project needed, which matters for school
   accounts. `goog auth script` prints the steps: copy a template Sheet (its
   script comes with it), deploy the script as a web app for "Anyone", and run
-  `goog auth script <the /exec URL>` (or a file holding it, or `-` for stdin).
-  goog then fetches tokens directly, with
-  no browser, and the URL works as a key to your account, so keep it private.
+  `goog auth script <the /exec URL>` (or a file holding it, or `-` for
+  stdin). goog then fetches tokens directly, with no browser. The URL works
+  as a key to your account, so keep it private; archive the deployment to
+  revoke it. The script asks for most of the account up front (Docs, Slides,
+  Sheets, Drive, Gmail, Calendar, Tasks, Contacts, YouTube, Chat and every
+  Classroom scope) so it never needs redeploying, and you can untick any of
+  it on Google's permission screen. The Forms API isn't reachable this way.
   `--manual` prints the script to paste instead of copying the template.
-  Deployed for "Only myself", goog calls it through your signed-in Chrome (CDP
-  on `127.0.0.1:9223`).
-- `goog auth client client_secret.json`: a normal Desktop OAuth client.
+  Deployed for "Only myself", goog calls it through your signed-in Chrome
+  (CDP on `127.0.0.1:9223`).
+- `goog auth client client_secret.json`: a normal Desktop OAuth client. It
+  asks for the same scopes as the script.
 
 Config is in `~/.config/goog/`. Sync records, watcher state, and logs are in
 `~/.cache/goog/`. `GOOG_CONFIG_DIR` and `GOOG_CACHE_DIR` override both.

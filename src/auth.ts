@@ -12,6 +12,8 @@ import {join} from "node:path";
 import {withBrowser} from "./browser.ts";
 import {CACHE_DIR, CONFIG_DIR, loadConfig, readJson, writeJson} from "./config.ts";
 
+// Everything goog might use, asked for up front: a broker's scopes are fixed
+// when it's deployed, so adding one later would mean every user redeploying.
 export const SCOPES = [
   "https://www.googleapis.com/auth/documents",
   "https://www.googleapis.com/auth/presentations",
@@ -23,8 +25,6 @@ export const SCOPES = [
   // Apps Script has no Forms advanced service, so a broker's token gets 403.
   "https://www.googleapis.com/auth/forms.body",
   "https://www.googleapis.com/auth/forms.responses.readonly",
-  // The rest of the account, asked for up front so a broker never needs
-  // redeploying.
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/tasks",
   "https://www.googleapis.com/auth/contacts",
@@ -34,9 +34,7 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/chat.spaces",
   "https://www.googleapis.com/auth/chat.messages",
   "https://www.googleapis.com/auth/chat.memberships",
-  // goog classroom reads your classes, their work and your submissions. It
-  // asks for every Classroom scope (the list in Classroom's discovery doc),
-  // so a broker deployed today never needs redeploying when goog does more.
+  // Every Classroom scope in Classroom's discovery doc.
   "https://www.googleapis.com/auth/classroom.addons.student",
   "https://www.googleapis.com/auth/classroom.addons.teacher",
   "https://www.googleapis.com/auth/classroom.announcements",
@@ -107,15 +105,23 @@ async function fetchToken(): Promise<Cached> {
     return {token: j.access_token, expires: Date.now() + j.expires_in * 1000, source: "client"};
   }
   if (cfg.broker) {
-    const j: any = (await fromBroker(cfg.broker)) ?? (await withBrowser(async (ctx) => {
-      for (const method of ["post", "get"] as const) {
-        const r = await ctx.request[method](cfg.broker!, {timeout: 30000});
-        if (r.url().includes("accounts.google.com")) throw new Error("Chrome isn't signed in to Google; sign in there first");
-        const reply = json(await r.text());
-        if (reply) return reply;
-      }
-      throw new Error(`the Apps Script broker didn't return a token; open ${cfg.broker} in Chrome to check it`);
-    }));
+    const url = cfg.broker;
+    const j: any = await hidingUrl(async () =>
+      (await askBroker(async (method) => {
+        const r = await fetch(url, {method, signal: AbortSignal.timeout(30_000)}).catch((e) => {
+          throw new Error(`couldn't reach the Apps Script broker: ${e.cause?.code ?? e.message}`);
+        });
+        return {url: r.url, status: r.status, text: await r.text()};
+      })) ??
+      (await withBrowser(async (ctx) => {
+        const reply = await askBroker(async (method) => {
+          const r = await ctx.request.fetch(url, {method, timeout: 30_000});
+          return {url: r.url(), status: r.status(), text: await r.text()};
+        });
+        if (!reply) throw new Error("Chrome isn't signed in to Google; sign in there first");
+        return reply;
+      })),
+    );
     // Only the field names: a reply without `token` may still hold one.
     if (!j.token) throw new Error(`the Apps Script broker returned an error: ${typeof j.error === "string" ? j.error : `no token (fields: ${Object.keys(j ?? {}).join(", ") || "none"})`}`);
     return {token: j.token, expires: Date.now() + (await lifetime(j.token)), source: "script"};
@@ -123,19 +129,30 @@ async function fetchToken(): Promise<Cached> {
   throw new Error("goog isn't signed in to Google. Run `goog auth script` and show the user the steps it prints.");
 }
 
-// A broker deployed for "Anyone" answers without cookies. One deployed for
-// "Only myself" sends a cookieless request to a sign-in page, so this returns
-// null and the caller asks again through Chrome. The token comes from POST,
-// which crawlers and link previews never send; brokers deployed before that
-// only answer GET.
-async function fromBroker(url: string): Promise<any> {
+// Asks a broker for its token, one request at a time through `send`. POST
+// first (see BROKER_SOURCE); brokers deployed before doPost only answer GET.
+// Returns null when the request landed on a sign-in page: a broker deployed
+// for "Only myself", which only answers through the signed-in Chrome.
+async function askBroker(send: (method: string) => Promise<{url: string; status: number; text: string}>): Promise<any> {
+  let status = 0;
   for (const method of ["POST", "GET"]) {
-    const r = await fetch(url, {method, signal: AbortSignal.timeout(30_000)});
+    const r = await send(method);
     if (new URL(r.url).hostname === "accounts.google.com") return null;
-    const reply = json(await r.text());
+    const reply = json(r.text);
     if (reply) return reply;
+    status ||= r.status;
   }
-  return null;
+  throw new Error(`the Apps Script broker didn't return a token (HTTP ${status}); its deployment may be archived, or the script may need authorizing again (open it, Deploy → New deployment)`);
+}
+
+// The broker URL works like a password, so errors never quote it. Playwright's
+// errors end with a call log that does.
+async function hidingUrl<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e: any) {
+    throw new Error(String(e?.message ?? e).replace(/https:\/\/script\.google\.com\/\S*/g, "<broker URL>"));
+  }
 }
 
 function json(text: string): any {
@@ -163,7 +180,7 @@ export function authStatus(): string {
   const saved = readJson<{refresh_token?: string} | null>(refreshPath, null);
   if (process.env.GOOG_TOKEN) return "using $GOOG_TOKEN";
   if (cfg.client && saved?.refresh_token) return `using your OAuth client ${cfg.client.client_id.split("-")[0]}…`;
-  if (cfg.broker) return `using the Apps Script broker (${cfg.broker.slice(0, 60)}…)`;
+  if (cfg.broker) return "using the Apps Script broker";
   return "not set up";
 }
 
@@ -246,8 +263,8 @@ export const BROKER_TEMPLATE = "https://docs.google.com/spreadsheets/d/1HCVN1eXl
 // Scopes come from the manifest; the advanced services there switch on the
 // APIs goog's token may call (Docs, Slides, Drive, Classroom, Gmail, Chat and
 // the rest) for the script's Cloud project, which the token needs.
-// The token is only in POST replies: a browser, crawler or link preview opening
-// the URL gets the doGet text.
+// The token is only in POST replies. A browser, crawler or link preview opening
+// the URL gets the doGet text, and Google does index script.googleusercontent.com.
 export const BROKER_SOURCE = `function doGet() {
   return ContentService.createTextOutput("this is your goog sign-in link. send it to your agent and keep it private, it works like a password");
 }

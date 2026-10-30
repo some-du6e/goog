@@ -303,9 +303,9 @@ async function cmdAuth(args: string[], manual = false) {
     out(`goog auth: ${authStatus()}`);
     if (authStatus() === "not set up") {
       out(`\nSet it up one of three ways:
-  goog auth script     copies an Apps Script into your Drive and deploys it;
-                       no browser needed afterwards, works with school
-                       accounts that don't allow Cloud projects (recommended)
+  goog auth script     an Apps Script you copy from a template and deploy;
+                       no Cloud project, works with school accounts, and no
+                       browser on this machine (recommended)
   goog auth client F   uses a Google Cloud OAuth client (Desktop app) JSON
   goog auth import F   reuses a refresh token from another tool (authorized_user token.json)`);
     }
@@ -334,7 +334,7 @@ ${BROKER_SOURCE}
 
 ${JSON.stringify(BROKER_MANIFEST, null, 2)}
 
-4. Then deploy it as in steps 3-4 of \`goog auth script\`.`);
+4. Deploy → New deployment → Deploy, then do steps 3-4 of \`goog auth script\`.`);
       return;
     }
     if (!arg) {
@@ -358,14 +358,22 @@ a private window with only this one fixes it.
 
 Then run: goog auth script <the /exec URL, or a file holding it, or - to
 read it from stdin>
-Never put the URL in files, commits or logs.
+Never put the URL in repos, commits or logs.
 To revoke it: Deploy → Manage deployments → Archive.
 No template: goog auth script --manual.`);
       return;
     }
     // The URL works like a password, so it can come from a file (or stdin, as
     // "-") and stay out of the command line and the agent's transcript.
-    const url = arg === "-" ? readFileSync(0, "utf8").trim() : /^https?:/.test(arg) ? arg : readFileSync(arg, "utf8").trim();
+    let url = arg.trim();
+    if (!/^https?:/.test(url)) {
+      try {
+        url = readFileSync(url === "-" ? 0 : url, "utf8").trim();
+      } catch {
+        // Not quoting it: it may be the URL, mistyped.
+        throw new Error("pass the /exec URL, a file holding it, or - to read it from stdin");
+      }
+    }
     if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) throw new Error("that isn't an Apps Script web app URL (https://script.google.com/…/exec)");
     const cfg = loadConfig();
     const before = structuredClone(cfg);

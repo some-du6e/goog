@@ -44,39 +44,64 @@ test("sign-in ignores replies without its state, and sends the PKCE verifier", {
 });
 
 // Plays a broker that answers `reply(method)`, as seen after following
-// redirects to `landed`.
-async function withBroker<T>(landed: string, reply: (method: string) => string, fn: () => Promise<T>): Promise<T> {
+// redirects to `landed`, and returns the methods it was asked with.
+async function withBroker(landed: string, reply: (method: string) => string, fn: () => Promise<unknown>): Promise<string[]> {
   const realFetch = globalThis.fetch;
+  const asked: string[] = [];
   globalThis.fetch = (async (url: any, init?: any) => {
     if (String(url).startsWith("https://oauth2.googleapis.com/tokeninfo")) return new Response(JSON.stringify({expires_in: "3000"}));
-    if (String(url) !== "https://script.google.com/macros/s/x/exec") return realFetch(url, init);
+    if (String(url) !== BROKER) return realFetch(url, init);
+    asked.push(init?.method ?? "GET");
     const r = new Response(reply(init?.method ?? "GET"));
     Object.defineProperty(r, "url", {value: landed});
     return r;
   }) as typeof fetch;
   // Nothing listens here, so a fallback to Chrome fails with "no Chrome at".
-  saveConfig({broker: "https://script.google.com/macros/s/x/exec", chrome: {endpoint: "http://127.0.0.1:1"}});
+  saveConfig({broker: BROKER, chrome: {endpoint: "http://127.0.0.1:1"}});
   forgetToken();
   try {
-    return await fn();
+    await fn();
   } finally {
     globalThis.fetch = realFetch;
   }
+  return asked;
 }
 
+const BROKER = "https://script.google.com/macros/s/AKfycbSECRET/exec";
 const echo = "https://script.googleusercontent.com/macros/echo?x";
+const doGetText = "this is your goog sign-in link";
 
 test("a broker deployed for Anyone hands out its token to a POST, without Chrome", async () => {
-  // A visit (GET) only gets the doGet text, so a crawler or link preview never sees a token.
-  const token = await withBroker(echo, (m) => (m === "POST" ? JSON.stringify({token: "ya29.t"}) : "This is your goog sign-in link."), getToken);
+  let token;
+  const asked = await withBroker(echo, (m) => (m === "POST" ? JSON.stringify({token: "ya29.t"}) : doGetText), async () => (token = await getToken()));
   assert.equal(token, "ya29.t");
+  assert.deepEqual(asked, ["POST"]);
 });
 
 test("a broker from before doPost still hands out its token to a GET", async () => {
-  const token = await withBroker(echo, (m) => (m === "POST" ? "<html>Script function not found: doPost</html>" : JSON.stringify({token: "ya29.old"})), getToken);
+  let token;
+  const asked = await withBroker(echo, (m) => (m === "POST" ? "<html>Script function not found: doPost</html>" : JSON.stringify({token: "ya29.old"})), async () => (token = await getToken()));
   assert.equal(token, "ya29.old");
+  assert.deepEqual(asked, ["POST", "GET"]);
 });
 
-test("a broker deployed for Only myself is asked again through Chrome", async () => {
-  await assert.rejects(withBroker("https://accounts.google.com/v3/signin/identifier", () => "<html>", getToken), /no Chrome at/);
+test("a broker deployed for Only myself is asked again through Chrome, after one request", async () => {
+  // JSON on the sign-in page: only the redirect check can send this to Chrome.
+  const asked = await withBroker("https://accounts.google.com/v3/signin/identifier", () => JSON.stringify({token: "not-this"}), () =>
+    assert.rejects(getToken(), /no Chrome at/),
+  );
+  assert.deepEqual(asked, ["POST"]);
+});
+
+test("a broker that answers with no token says so, without quoting its URL or going to Chrome", async () => {
+  await withBroker(echo, () => "<html>Sorry, unable to open the file at this time.</html>", () =>
+    assert.rejects(getToken(), (e: any) => /didn't return a token/.test(e.message) && !e.message.includes("SECRET") && !/Chrome/.test(e.message)),
+  );
+  await withBroker(echo, () => JSON.stringify({error: "Exception: no access"}), () => assert.rejects(getToken(), /returned an error: Exception: no access/));
+});
+
+test("not signed in, the error tells the agent to run goog auth script", async () => {
+  saveConfig({});
+  forgetToken();
+  await assert.rejects(getToken(), /Run `goog auth script` and show the user the steps/);
 });

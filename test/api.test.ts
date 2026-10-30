@@ -354,7 +354,7 @@ test("an expired sign-in is refreshed once, even for a write", async () => {
   assert.equal(r.error, undefined);
   assert.equal(r.sent.length, 2);
   const again = await run(["drive/v3/files/a"], [expired(), expired()]);
-  assert.equal(again.error, "HTTP 401: Invalid Credentials; run goog auth to sign in again");
+  assert.equal(again.error, "HTTP 401: Invalid Credentials; sign in again with goog auth script");
   assert.equal(again.sent.length, 2);
 });
 
