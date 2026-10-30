@@ -134,15 +134,16 @@ test("goog api --help shows its part of the help", () => {
 });
 
 // Each call to the stub takes the next answer and records the request.
-type Sent = {method: string; url: URL; body: any; headers: Headers};
-async function run(args: string[], answers: (Response | Error)[], opts: {tty?: boolean} = {}) {
+type Sent = {raw?: string; method: string; url: URL; body: any; headers: Headers};
+type Run = {sent: Sent[]; stdout: string; stderr: string; error?: string; raw?: string};
+async function run(args: string[], answers: (Response | Error)[], opts: {tty?: boolean} = {}): Promise<Run> {
   const sent: Sent[] = [];
   let stdout = "";
   let stderr = "";
   const real = {fetch: globalThis.fetch, ...io, retryMs: limits.retryMs};
   limits.retryMs = 0;
   globalThis.fetch = (async (url: any, init: any) => {
-    sent.push({method: init.method, url: new URL(String(url)), body: init.body === undefined ? undefined : JSON.parse(init.body), headers: new Headers(init.headers)});
+    sent.push({raw: init.body, method: init.method, url: new URL(String(url)), body: init.body === undefined ? undefined : JSON.parse(init.body), headers: new Headers(init.headers)});
     const a = answers.shift();
     if (!a) throw new Error(`unexpected fetch ${url}`);
     if (a instanceof Error) throw a;
@@ -161,7 +162,7 @@ async function run(args: string[], answers: (Response | Error)[], opts: {tty?: b
     Object.assign(io, {out: real.out, err: real.err, tty: real.tty});
     limits.retryMs = real.retryMs;
   }
-  return {sent, stdout, stderr, error};
+  return {sent, stdout, stderr, error, raw: sent.at(-1)?.raw};
 }
 const json = (j: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(j), {status, headers: {"content-type": "application/json; charset=UTF-8", ...headers}});
 
@@ -194,6 +195,10 @@ test("--input is the body, and fields then go in the query", async () => {
   assert.equal(r.sent[0].method, "POST");
   assert.equal(r.sent[0].url.href, "https://docs.googleapis.com/v1/documents/d:batchUpdate?x=1");
   assert.equal(r.sent[0].body.requests[0].insertText.text, "hi");
+  // Sent as written: a number past 2^53 keeps its digits.
+  writeFileSync(join(tmp, "big.json"), '{"id": 12345678901234567890}');
+  const big = await run(["drive/v3/x", "-X", "POST", "--input", join(tmp, "big.json")], [json({})]);
+  assert.equal(big.raw, '{"id": 12345678901234567890}');
   // -H replaces the default Content-Type, whatever its case.
   assert.equal(r.sent[0].headers.get("content-type"), "application/json; charset=utf-8");
 });
@@ -231,6 +236,10 @@ test("--paginate stops on a failed page, a non-JSON page, or a repeated token", 
   const first = await run(["drive/v3/files/a/export", "--paginate"], [new Response("text", {headers: {"content-type": "text/plain"}})]);
   assert.equal(first.error, undefined);
   assert.equal(first.stdout, "text");
+  // A list that isn't in an object is shown as it is.
+  const list = await run(["drive/v3/x", "--paginate"], [json([1, 2])]);
+  assert.equal(list.error, undefined);
+  assert.deepEqual(JSON.parse(list.stdout), [1, 2]);
   const loop = await run(["drive/v3/files", "--paginate"], [json({nextPageToken: "t"}), json({nextPageToken: "t"})]);
   assert.match(loop.error ?? "", /page token t twice; stopping after 2 pages/);
 });
@@ -350,7 +359,7 @@ test("a timeout covers the whole answer and isn't retried", async () => {
   io.err = () => {};
   try {
     stub(never);
-    await assert.rejects(request("POST", "https://drive.googleapis.com/x", {}, {}), /no answer in 0\.03s\); the write may still have gone through/);
+    await assert.rejects(request("POST", "https://drive.googleapis.com/x", "{}", {}), /no answer in 0\.03s\); the write may still have gone through/);
     assert.equal(calls, 1);
     stub(never);
     await assert.rejects(request("GET", "https://drive.googleapis.com/x", undefined, {}), /no answer in 0\.03s\); check the network/);

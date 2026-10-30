@@ -190,13 +190,15 @@ export async function cmdApi(args: string[], help: string) {
   const fields = all.filter((f) => !SYSTEM.has(f.key));
   addQuery(url, [...all.filter((f) => SYSTEM.has(f.key)), ...(o.query ?? []).map((s) => keyValue(s, "--query"))]);
 
-  let body: unknown;
+  // The JSON as sent; --input goes as it is, so its numbers keep every digit.
+  let body: string | undefined;
   if (o.input !== undefined) {
     const src = o.input === "-" ? "stdin" : o.input;
     const text = read(o.input, "--input");
     if (!text.trim()) throw new Error(`--input ${src} is empty`);
     try {
-      body = JSON.parse(text);
+      JSON.parse(text);
+      body = text;
     } catch (e: any) {
       throw new Error(`--input ${src} isn't JSON: ${e.message}`);
     }
@@ -206,7 +208,7 @@ export async function cmdApi(args: string[], help: string) {
   if (method === "GET" && body !== undefined) throw new Error("a GET can't have a body; add -X POST (or PATCH, PUT) to send --input");
   // As in gh: with --input, fields go in the query.
   if (body !== undefined || method === "GET" || method === "DELETE") addQuery(url, fields);
-  else if (fields.length) body = fieldsBody(fields);
+  else if (fields.length) body = JSON.stringify(fieldsBody(fields));
   if (o.paginate && method !== "GET") throw new Error("--paginate only follows GETs");
 
   const headers = Object.fromEntries((o.header ?? []).map(parseHeader));
@@ -228,10 +230,10 @@ async function retry(message: string, delayMs: number) {
 // goog's own, and safe to resend, but a write here could be anything, and sent
 // twice it could make two of something. So a write is only sent again after a
 // 401 or a rate limit, which mean Google didn't run it. A GET is also retried
-// after a 5xx or a lost connection, 4 tries in all; rate limits get 7 tries of
-// their own. Timeouts aren't retried. Every answer comes back, errors
+// after a 5xx or a lost connection, 4 tries for those; rate limits get 7 tries
+// of their own. Timeouts aren't retried. Every answer comes back, errors
 // included, for show() to print.
-export async function request(method: string, url: string, body: unknown, extra: Record<string, string>): Promise<Answer> {
+export async function request(method: string, url: string, body: string | undefined, extra: Record<string, string>): Promise<Answer> {
   const write = method !== "GET";
   let refreshed = false;
   let failed = 0; // 5xx and lost connections, for a GET
@@ -245,7 +247,7 @@ export async function request(method: string, url: string, body: unknown, extra:
     let r: Response;
     let data: Buffer;
     try {
-      r = await fetch(url, {method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal});
+      r = await fetch(url, {method, headers, body, signal});
     } catch (e: any) {
       const timedOut = e?.name === "TimeoutError";
       const why = timedOut ? `no answer in ${limits.timeoutMs / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
@@ -316,6 +318,8 @@ async function paginate(url: URL, call: () => Promise<Answer>, silent: boolean) 
       if (a.status < 300) throw new Error(`page ${pages.length + 1} came back as ${a.type || "an untyped answer"}, not valid JSON`);
       return show(a, silent);
     }
+    // Only objects have lists to join; anything else is shown as it is.
+    if (!pages.length && (page === null || typeof page !== "object" || Array.isArray(page))) return show(a, silent);
     pages.push(page);
     if (pages.length % 10 === 0 && io.stderrTty()) io.err(`goog: ${pages.length} pages so far\n`);
     const token = page?.nextPageToken;
