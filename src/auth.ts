@@ -122,7 +122,7 @@ async function fetchToken(): Promise<Cached> {
         return reply;
       }).catch((e) => {
         if (!/^no Chrome at/.test(e.message)) throw e;
-        throw new Error("the Apps Script web app asks for a sign-in, so it isn't deployed for Anyone: redeploy it with Who has access: Anyone, or start your signed-in Chrome");
+        throw new Error(`the Apps Script web app asks for a sign-in, so it isn't deployed for Anyone: redeploy it with Who has access: Anyone if your account offers that, or goog needs your signed-in Chrome (${e.message})`);
       })),
     );
     // Only the field names: a reply without `token` may still hold one.
@@ -140,8 +140,10 @@ async function askBroker(send: (method: string) => Promise<{url: string; status:
   let status = 0;
   for (const method of ["POST", "GET"]) {
     const r = await send(method);
-    // Google's sign-in page, or a school's own (Microsoft, ADFS) that it sends on to.
-    if (!/^script\.google(usercontent)?\.com$/.test(new URL(r.url).hostname)) return null;
+    // Google's sign-in page, or a school's own (Microsoft, ADFS) that it sends
+    // on to. Google's other pages (a /sorry captcha) are errors, not sign-ins.
+    const host = new URL(r.url).hostname;
+    if (host === "accounts.google.com" || !/(^|\.)google(usercontent)?\.com$/.test(host)) return null;
     const reply = json(r.text);
     if (reply) return reply;
     status ||= r.status;

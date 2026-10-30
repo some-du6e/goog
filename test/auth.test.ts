@@ -86,15 +86,22 @@ test("a broker from before doPost still hands out its token to a GET", async () 
   assert.deepEqual(asked, ["POST", "GET"]);
 });
 
-test("a broker deployed for Only myself is asked again through Chrome, after one request", async () => {
+test("a broker that asks for a sign-in goes to Chrome after one request, and without Chrome says to redeploy", async () => {
   // JSON on the sign-in page: only the redirect check can send this to Chrome.
   // With no Chrome, the error names the fix that needs none.
   for (const signIn of ["https://accounts.google.com/v3/signin/identifier", "https://login.microsoftonline.com/school/saml2"]) {
     const asked = await withBroker(signIn, () => JSON.stringify({token: "not-this"}), () =>
-      assert.rejects(getToken(), /isn't deployed for Anyone: redeploy it with Who has access: Anyone/),
+      assert.rejects(getToken(), /isn't deployed for Anyone: redeploy it with Who has access: Anyone if .*\(no Chrome at/),
     );
     assert.deepEqual(asked, ["POST"]);
   }
+});
+
+test("Google's other pages are errors, not sign-ins", async () => {
+  const asked = await withBroker("https://www.google.com/sorry/index?continue=x", () => "<html>unusual traffic</html>", () =>
+    assert.rejects(getToken(), /didn't return a token/),
+  );
+  assert.deepEqual(asked, ["POST", "GET"]);
 });
 
 test("a broker that answers with no token says so, without quoting its URL or going to Chrome", async () => {

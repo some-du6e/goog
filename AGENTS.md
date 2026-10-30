@@ -120,6 +120,9 @@ Observed live while building `goog auth script`:
 
 - A web app deployed "execute as me, access Anyone" answers without cookies;
   "Only myself" redirects a cookieless request to accounts.google.com.
+  `askBroker` also counts any non-Google host as a sign-in page, on the
+  assumption (not yet seen live) that a school's SSO is where a domain-only
+  deployment sends it.
 - A POST to `/exec` answers 302 to `script.googleusercontent.com`, which
   fetch follows as a GET and which carries doPost's output. A doGet-only
   deployment answers POST with an HTML error page.
