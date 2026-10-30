@@ -215,8 +215,9 @@ export async function cmdApi(args: string[], help: string) {
   return paginate(url, call, !!o.silent);
 }
 
-// Exports, big downloads and Apps Script runs can take minutes.
-export const limits = {timeoutMs: 600_000};
+// Exports, big downloads and Apps Script runs can take minutes. The tests
+// shorten both.
+export const limits = {timeoutMs: 600_000, retryMs: 1000};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function retry(message: string, delayMs: number) {
   io.err(`goog: ${message}; retrying in ${Math.ceil(delayMs / 1000)}s\n`);
@@ -227,12 +228,15 @@ async function retry(message: string, delayMs: number) {
 // goog's own, and safe to resend, but a write here could be anything, and sent
 // twice it could make two of something. So a write is only sent again after a
 // 401 or a rate limit, which mean Google didn't run it. A GET is also retried
-// after a 5xx or a lost connection. Timeouts aren't retried. Every answer comes
-// back, errors included, for show() to print.
+// after a 5xx or a lost connection, 4 tries in all; rate limits get 7 tries of
+// their own. Timeouts aren't retried. Every answer comes back, errors
+// included, for show() to print.
 export async function request(method: string, url: string, body: unknown, extra: Record<string, string>): Promise<Answer> {
   const write = method !== "GET";
   let refreshed = false;
-  for (let attempt = 0; ; attempt++) {
+  let failed = 0; // 5xx and lost connections, for a GET
+  let limited = 0; // rate limits
+  for (;;) {
     const headers = new Headers(extra);
     if (body !== undefined && !headers.has("content-type")) headers.set("Content-Type", "application/json");
     headers.set("Authorization", `Bearer ${await getToken()}`);
@@ -245,8 +249,8 @@ export async function request(method: string, url: string, body: unknown, extra:
     } catch (e: any) {
       const timedOut = e?.name === "TimeoutError";
       const why = timedOut ? `no answer in ${limits.timeoutMs / 1000}s` : (e?.cause?.code ?? e?.cause?.message ?? e?.message);
-      if (!write && !timedOut && attempt < 3) {
-        await retry(`can't reach Google (${why})`, 1000 * 2 ** attempt);
+      if (!write && !timedOut && failed < 3) {
+        await retry(`can't reach Google (${why})`, limits.retryMs * 2 ** failed++);
         continue;
       }
       throw new Error(`can't reach Google (${why}); ${write ? "the write may still have gone through" : "check the network connection"}`);
@@ -259,8 +263,8 @@ export async function request(method: string, url: string, body: unknown, extra:
       if (r.ok && write) throw new Error(`${why}; Google did the write (HTTP ${r.status}), but its answer was lost`);
       if (timedOut) throw new Error(r.ok ? why : `HTTP ${r.status}, and ${why}`);
       if (r.ok) {
-        if (attempt < 3) {
-          await retry(why, 1000 * 2 ** attempt);
+        if (failed < 3) {
+          await retry(why, limits.retryMs * 2 ** failed++);
           continue;
         }
         throw new Error(why);
@@ -280,8 +284,13 @@ export async function request(method: string, url: string, body: unknown, extra:
       forgetToken();
       continue;
     }
-    if ((r.status === 429 || /rate ?limit/i.test(reason) || (!write && r.status >= 500)) && attempt < 6) {
-      await retry(r.status === 429 ? "Google rate limit" : `Google error ${r.status}: ${j.error?.message ?? r.statusText}`, backoff(attempt, r.headers.get("retry-after"), r.status));
+    const message = r.status === 429 ? "Google rate limit" : `Google error ${r.status}: ${j.error?.message ?? r.statusText}`;
+    if ((r.status === 429 || /rate ?limit/i.test(reason)) && limited < 6) {
+      await retry(message, backoff(limited++, r.headers.get("retry-after"), r.status));
+      continue;
+    }
+    if (!write && r.status >= 500 && failed < 3) {
+      await retry(message, backoff(failed++, r.headers.get("retry-after"), r.status));
       continue;
     }
     return {status: r.status, type, data};

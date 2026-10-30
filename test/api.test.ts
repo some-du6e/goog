@@ -139,7 +139,8 @@ async function run(args: string[], answers: (Response | Error)[], opts: {tty?: b
   const sent: Sent[] = [];
   let stdout = "";
   let stderr = "";
-  const real = {fetch: globalThis.fetch, ...io};
+  const real = {fetch: globalThis.fetch, ...io, retryMs: limits.retryMs};
+  limits.retryMs = 0;
   globalThis.fetch = (async (url: any, init: any) => {
     sent.push({method: init.method, url: new URL(String(url)), body: init.body === undefined ? undefined : JSON.parse(init.body), headers: new Headers(init.headers)});
     const a = answers.shift();
@@ -158,6 +159,7 @@ async function run(args: string[], answers: (Response | Error)[], opts: {tty?: b
   } finally {
     globalThis.fetch = real.fetch;
     Object.assign(io, {out: real.out, err: real.err, tty: real.tty});
+    limits.retryMs = real.retryMs;
   }
   return {sent, stdout, stderr, error};
 }
@@ -274,6 +276,14 @@ test("goog api retries a read but never resends a write Google may have run", as
   const drive = await run(["drive/v3/files/a/copy", "-X", "POST"], [json({error: {code: 403, message: "slow", errors: [{reason: "userRateLimitExceeded"}]}}, 403, {"retry-after": "0"}), json({id: "b"})]);
   assert.equal(drive.error, undefined);
   assert.equal(drive.sent.length, 2);
+  // A read's 5xx gets four tries; rate limits get seven of their own.
+  const down = await run(["drive/v3/files/a"], Array.from({length: 4}, busy));
+  assert.equal(down.error, "HTTP 503: busy");
+  assert.equal(down.sent.length, 4);
+  const lost = Object.assign(new TypeError("fetch failed"), {cause: {code: "ECONNRESET"}});
+  const mixed = await run(["drive/v3/files/a"], [json({error: {message: "x"}}, 429, {"retry-after": "0"}), json({error: {message: "x"}}, 429, {"retry-after": "0"}), json({error: {message: "x"}}, 429, {"retry-after": "0"}), lost, json({id: "a"})]);
+  assert.equal(mixed.error, undefined);
+  assert.equal(mixed.sent.length, 5);
   // Seven tries, then the error.
   const stuck = await run(["drive/v3/files/a"], Array.from({length: 7}, () => json({error: {code: 429, message: "slow down"}}, 429, {"retry-after": "0"})));
   assert.equal(stuck.error, "HTTP 429: slow down");
@@ -301,12 +311,15 @@ const broken = (status: number, headers: Record<string, string> = {}) => new Res
   pull: (c) => c.error(Object.assign(new TypeError("terminated"), {cause: {code: "UND_ERR_SOCKET"}})),
 }), {status, headers: {"content-type": "application/json", ...headers}});
 
-test("an answer that breaks off partway says so; an error that does is still retried", async () => {
+test("an answer that breaks off partway: a read is retried, a write isn't, an error is handled on its status", async () => {
   // A read is sent again.
   const r = await run(["drive/v3/files/a"], [broken(200), json({id: "a"})]);
   assert.equal(r.error, undefined);
   assert.equal(r.sent.length, 2);
   assert.match(r.stderr, /the connection broke during the answer \(UND_ERR_SOCKET\); retrying/);
+  const always = await run(["drive/v3/files/a"], [broken(200), broken(200), broken(200), broken(200)]);
+  assert.equal(always.error, "the connection broke during the answer (UND_ERR_SOCKET)");
+  assert.equal(always.sent.length, 4);
   const write = await run(["drive/v3/files/a/copy", "-X", "POST"], [broken(200)]);
   assert.equal(write.error, "the connection broke during the answer (UND_ERR_SOCKET); Google did the write (HTTP 200), but its answer was lost");
   assert.equal(write.sent.length, 1);
