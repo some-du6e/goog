@@ -150,6 +150,6 @@ Observed live while building `goog auth script`:
 - Auth is the imported token (`goog auth status`; `$GOOG_TOKEN` overrides
   it). Tokens stay out of tool output and the repo.
 - A broker's `/exec` URL works like a password too. Errors that reach
-  `bin/goog.ts`'s catch, and everything `fetchToken` throws, go through
-  `hideBrokerUrls`; anything printed another way (`out`, a watcher log) has
-  to as well.
+  `bin/goog.ts`'s catch, and everything the broker request in `fetchToken`
+  throws, go through `hideBrokerUrls`; anything printed another way (`out`, a
+  watcher log) has to as well.

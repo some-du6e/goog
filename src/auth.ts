@@ -185,7 +185,7 @@ async function hidingUrl<T>(fn: () => Promise<T>): Promise<T> {
 // with or without its scheme. Only real deployment paths (…/macros/…), so a
 // hint like "https://script.google.com/…/exec" survives.
 export const hideBrokerUrls = (msg: string) =>
-  msg.replace(/(https?:\/\/)?script\.google(usercontent)?\.com\/([^\s'"]*\/)?macros\/[^\s'"]*/g, "<broker URL>");
+  msg.replace(/(https?:\/\/)?script\.google(usercontent)?\.com\/([^\s'"]*\/)?macros\/[^\s'"]*/gi, "<broker URL>");
 
 function json(text: string): any {
   try {
