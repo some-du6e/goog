@@ -219,8 +219,10 @@ lists, adding `nextPageToken` to a `fields=` that leaves it out. Reads are
 retried like every other command's. A write is only sent again when Google
 can't have run it (a 429 or rate limit, an expired sign-in, or a connection
 that never opened), so a create that failed with a 5xx or a dropped
-connection is never made twice. Errors print Google's error JSON and exit 1. Exports and media
-are written as they come; binary ones need a redirect.
+connection is never made twice. Google gets 10 minutes to start answering and
+10 more to finish, for slow exports and Apps Script runs, and a call that
+runs out isn't retried. Errors print Google's error JSON and exit 1. Exports
+and media are written as they come; binary ones need a redirect.
 
 ## How it writes
 

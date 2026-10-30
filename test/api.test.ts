@@ -80,6 +80,7 @@ test("headers", () => {
   assert.throws(() => parseHeader("host: evil.com"), /sets host itself/);
   assert.throws(() => parseHeader("Transfer-Encoding: chunked"), /sets Transfer-Encoding itself/);
   assert.throws(() => parseHeader("connection: close"), /sets connection itself/);
+  assert.throws(() => parseHeader("Expect: 100-continue"), /sets Expect itself/);
   assert.throws(() => parseHeader("X-HTTP-Method-Override: DELETE"), /use -X instead/);
   assert.throws(() => parseHeader("X-Note: café ☃"), /only Latin-1 fits/);
   assert.deepEqual(parseHeader("X-Note: café"), ["X-Note", "café"]);
@@ -218,10 +219,11 @@ test("--paginate stops on a failed page, a non-JSON page, or a repeated token", 
   assert.match(failed.stderr, /page 2 failed; the 1 before it are left out/);
   assert.equal(JSON.parse(failed.stdout).error.message, "nope");
   const html = await run(["drive/v3/files", "--paginate"], [json({files: [1], nextPageToken: "t"}), new Response("<html>x</html>", {headers: {"content-type": "text/html"}})]);
-  assert.match(html.error ?? "", /page 2 came back as text\/html, not JSON/);
+  assert.match(html.error ?? "", /page 2 came back as text\/html, not valid JSON/);
   assert.equal(html.stdout, "");
   const bad = await run(["drive/v3/files", "--paginate"], [json({files: [1], nextPageToken: "t"}), new Response("", {headers: {"content-type": "application/json"}})]);
-  assert.equal(bad.error, "page 2 isn't valid JSON");
+  assert.equal(bad.error, "page 2 came back as application/json, not valid JSON");
+  assert.match(bad.stderr, /page 2 failed/);
   // A first page that isn't JSON is just shown.
   const first = await run(["drive/v3/files/a/export", "--paginate"], [new Response("text", {headers: {"content-type": "text/plain"}})]);
   assert.equal(first.error, undefined);
@@ -296,6 +298,46 @@ test("an answer that breaks off partway says so; an error that does is still ret
   try {
     assert.deepEqual(await api("GET", "https://docs.googleapis.com/v1/documents/x"), {ok: true});
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("an expired sign-in is refreshed once, even for a write", async () => {
+  const expired = () => json({error: {code: 401, message: "Invalid Credentials"}}, 401);
+  const r = await run(["drive/v3/files/a/copy", "-X", "POST"], [expired(), json({id: "b"})]);
+  assert.equal(r.error, undefined);
+  assert.equal(r.sent.length, 2);
+  const again = await run(["drive/v3/files/a"], [expired(), expired()]);
+  assert.equal(again.error, "HTTP 401: Invalid Credentials; run goog auth to sign in again");
+  assert.equal(again.sent.length, 2);
+});
+
+test("timeouts: one for the first byte and one for the rest, and goog api doesn't retry them", async () => {
+  const {api, ApiError} = await import("../src/google.ts");
+  const real = globalThis.fetch;
+  let calls = 0;
+  const stub = (answer: (signal: AbortSignal) => Promise<Response>) => {
+    calls = 0;
+    globalThis.fetch = ((_u: any, init: any) => (calls++, answer(init.signal))) as typeof fetch;
+  };
+  const never = (signal: AbortSignal) => new Promise<Response>((_, no) => signal.addEventListener("abort", () => no(signal.reason)));
+  try {
+    stub(never);
+    await assert.rejects(api("POST", "https://drive.googleapis.com/x", {}, {raw: true, timeoutMs: 30}), (e: any) => e instanceof ApiError && /no answer in 0\.03s\); the write may still have gone through/.test(e.message));
+    assert.equal(calls, 1);
+    stub(never);
+    await assert.rejects(api("GET", "https://drive.googleapis.com/x", undefined, {raw: true, timeoutMs: 30}), /no answer in 0\.03s\); check the network/);
+    assert.equal(calls, 1);
+    // Headers in time, then a body that stalls.
+    stub(async (signal) => new Response(new ReadableStream({start: (c) => signal.addEventListener("abort", () => c.error(signal.reason))}), {headers: {"content-type": "application/json"}}));
+    await assert.rejects(api("GET", "https://drive.googleapis.com/x", undefined, {timeoutMs: 30}), (e: any) => e instanceof ApiError && e.status === 0 && /took over 0.03s to come in/.test(e.message));
+    // A slow start inside the limit is fine.
+    stub(async () => (await new Promise((r) => setTimeout(r, 20)), json({ok: 1})));
+    assert.deepEqual(await api("GET", "https://drive.googleapis.com/x", undefined, {timeoutMs: 60}), {ok: 1});
+    // A BOM is dropped, as r.text() did.
+    stub(async () => new Response("\ufeffhi", {headers: {"content-type": "text/plain"}}));
+    assert.equal(await api("GET", "https://drive.googleapis.com/x", undefined, {text: true}), "hi");
   } finally {
     globalThis.fetch = real;
   }
