@@ -222,7 +222,7 @@ create that failed with a 5xx or a lost connection is never made twice. A
 call gets 10 minutes, for slow exports and Apps Script runs, and one that
 runs out isn't retried. Errors print Google's error JSON and exit 1. JSON is
 laid out in a terminal; through a pipe, answers, exports and media are
-written as they come. Binary ones need a redirect.
+written as they come (`--paginate`'s joined pages are always laid out). Binary ones need a redirect.
 
 ## How it writes
 
