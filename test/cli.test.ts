@@ -179,6 +179,8 @@ test("auth script: refuses what isn't an /exec URL without quoting it or saving 
   // Capitalised by a phone: taken as a URL, and checked as one.
   assert.match(goog("auth", "script", "Https://Script.google.com/macros/s/AKfycbSECRET/exec/x").stderr, /isn't an Apps Script web app URL/);
   assert.match(goog("auth", "HTTPS://script.google.com/macros/s/AKfycbSECRET/exec/x").stderr, /isn't an Apps Script web app URL/);
+  writeFileSync(join(tmp, "caps.txt"), "Https://Script.google.com/macros/s/AKfycbSECRET/exec/x\n");
+  assert.match(goog("auth", "script", "caps.txt").stderr, /isn't an Apps Script web app URL/);
   // "script" left out: still the URL check's error.
   assert.match(goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec").stderr, /isn't an Apps Script web app URL \(https:\/\/script\.google\.com\/…\/exec\)/);
   // Pasted into the wrong command, the URL still isn't echoed back.
