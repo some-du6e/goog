@@ -181,8 +181,11 @@ async function hidingUrl<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// Also run on every error goog prints, for a URL pasted into the wrong command.
-export const hideBrokerUrls = (msg: string) => msg.replace(/https?:\/\/script\.google(usercontent)?\.com\/[^\s'"]*/g, "<broker URL>");
+// Also run on every error goog prints, for a URL pasted into the wrong command,
+// with or without its scheme. Only real deployment paths (…/macros/…), so a
+// hint like "https://script.google.com/…/exec" survives.
+export const hideBrokerUrls = (msg: string) =>
+  msg.replace(/(https?:\/\/)?script\.google(usercontent)?\.com\/([^\s'"]*\/)?macros\/[^\s'"]*/g, "<broker URL>");
 
 function json(text: string): any {
   try {

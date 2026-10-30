@@ -177,10 +177,11 @@ test("auth script: refuses what isn't an /exec URL without quoting it or saving 
     assert.doesNotMatch(r.stderr, /SECRET/);
   }
   // "script" left out: still the URL check's error.
-  assert.match(goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec").stderr, /isn't an Apps Script web app URL/);
+  assert.match(goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec").stderr, /isn't an Apps Script web app URL \(https:\/\/script\.google\.com\/…\/exec\)/);
   // Pasted into the wrong command, the URL still isn't echoed back.
   const url = "https://script.google.com/macros/s/AKfycbSECRET/exec";
-  for (const r of [goog("auth", "import", url), goog("cat", url), goog(url), goog("cat", url, "--json")]) {
+  const bare = "script.google.com/a/macros/school.edu/s/AKfycbSECRET/exec";
+  for (const r of [goog("auth", "import", url), goog("cat", url), goog(url), goog("cat", url, "--json"), goog("cat", bare), goog("cat", url.replace("https", "http"))]) {
     assert.equal(r.status, 1);
     assert.doesNotMatch(r.stderr + r.stdout, /SECRET/);
   }
