@@ -151,3 +151,51 @@ test("goog pics: times out with exit 3, and lists the pictures once they're draw
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no pictures yet; goog pull/);
 });
+
+test("auth script: prints the template steps, or the script with --manual", () => {
+  const steps = goog("auth", "script");
+  assert.equal(steps.status, 0);
+  assert.match(steps.stdout, /spreadsheets\/d\/[\w-]+\/copy/);
+  assert.match(steps.stdout, /secret/);
+  const manual = goog("auth", "script", "--manual");
+  assert.equal(manual.status, 0);
+  assert.match(manual.stdout, /function doPost\(\)/);
+  assert.match(manual.stdout, /"access": "ANYONE_ANONYMOUS"/);
+  assert.doesNotMatch(manual.stdout, /copy#/);
+});
+
+test("auth script: refuses what isn't an /exec URL without quoting it or saving anything", () => {
+  const secret = "script.google.com/macros/s/AKfycbSECRET/exec"; // the scheme lost in a paste
+  for (const r of [
+    goog("auth", "script", secret),
+    goog("auth", "script", "https://example.com/x"),
+    goog("auth", "script", "http://script.google.com/macros/s/AKfycbSECRET/exec"), // not https
+    goog("auth", "script.google.com/macros/s/AKfycbSECRET/exec"),
+    spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "not a url\n"}),
+  ]) {
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stderr, /SECRET/);
+  }
+  // Capitalised by a phone: taken as a URL, and checked as one.
+  assert.match(goog("auth", "script", "Https://Script.google.com/macros/s/AKfycbSECRET/exec/x").stderr, /isn't an Apps Script web app URL/);
+  assert.match(goog("auth", "HTTPS://script.google.com/macros/s/AKfycbSECRET/exec/x").stderr, /isn't an Apps Script web app URL/);
+  // "script" left out: still the URL check's error.
+  assert.match(goog("auth", "http://script.google.com/macros/s/AKfycbSECRET/exec").stderr, /isn't an Apps Script web app URL \(https:\/\/script\.google\.com\/…\/exec\)/);
+  // Pasted into the wrong command, the URL still isn't echoed back.
+  const url = "https://script.google.com/macros/s/AKfycbSECRET/exec";
+  const bare = "Script.google.com/a/macros/school.edu/s/AKfycbSECRET/exec"; // capitalised by a phone
+  for (const r of [goog("auth", "import", url), goog("cat", url), goog(url), goog("cat", url, "--json"), goog("cat", bare), goog("cat", url.replace("https", "http"))]) {
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stderr + r.stdout, /SECRET/);
+  }
+  // Read from stdin: the error is the URL check's, not the "pass the URL" one.
+  const piped = spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: "https://example.com/x\n"});
+  assert.match(piped.stderr, /isn't an Apps Script web app URL/);
+  const empty = spawnSync(process.execPath, [bin, "auth", "script", "-"], {cwd: tmp, env, encoding: "utf8", input: ""});
+  assert.match(empty.stderr, /nothing came in on stdin/);
+  writeFileSync(join(tmp, "empty.txt"), " \n");
+  assert.match(goog("auth", "script", "empty.txt").stderr, /that file is empty/);
+  writeFileSync(join(tmp, "url.txt"), "https://example.com/x\n");
+  assert.match(goog("auth", "script", "url.txt").stderr, /isn't an Apps Script web app URL/);
+  assert.equal(existsSync(join(tmp, "config", "config.json")), false);
+});

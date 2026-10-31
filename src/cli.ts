@@ -2,7 +2,7 @@ import {spawn} from "node:child_process";
 import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync} from "node:fs";
 import {basename, dirname, join, relative, resolve} from "node:path";
 import {parseArgs} from "node:util";
-import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
+import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
@@ -75,7 +75,7 @@ Drive
   goog ls [query]               recent docs and slides
   goog new <title> [--slides]   create a doc (or a deck) and print its id
   goog open <doc>               print the doc's URL
-  goog auth [status|import <token.json>|script [URL]|client <client_secret.json>]
+  goog auth [status|script [URL|FILE|-|--manual]|import <token.json>|client <client_secret.json>]
 
 Any API call
   goog api <path>               call a Google API with goog's sign-in and print the JSON
@@ -297,14 +297,17 @@ function out(s: string) {
 
 const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
-async function cmdAuth(args: string[]) {
+async function cmdAuth(args: string[], manual = false) {
+  // `goog auth <url>`, with "script" left out, means the broker.
+  if (/^https?:/i.test(args[0] ?? "")) args = ["script", ...args];
   const [sub, arg] = args;
   if (!sub || sub === "status") {
     out(`goog auth: ${authStatus()}`);
     if (authStatus() === "not set up") {
       out(`\nSet it up one of three ways:
-  goog auth script     uses an Apps Script in your own Drive; works with school
-                       accounts that don't allow Cloud projects (recommended)
+  goog auth script     an Apps Script you copy from a template and deploy;
+                       no Cloud project, and once it's deployed for Anyone,
+                       no browser on this machine (recommended)
   goog auth client F   uses a Google Cloud OAuth client (Desktop app) JSON
   goog auth import F   reuses a refresh token from another tool (authorized_user token.json)`);
     }
@@ -321,8 +324,11 @@ async function cmdAuth(args: string[]) {
     }
   };
   if (sub === "script") {
-    if (!arg) {
-      out(`1. Open https://script.new in the signed-in Chrome.
+    if (manual) {
+      out(`Without the template, the user makes the script by hand. Put these steps
+in your reply to them as they are:
+
+1. Open https://script.new, signed in to the account goog should use.
 2. Paste this as Code.gs:
 
 ${BROKER_SOURCE}
@@ -331,14 +337,64 @@ ${BROKER_SOURCE}
 
 ${JSON.stringify(BROKER_MANIFEST, null, 2)}
 
-4. Deploy → New deployment → Web app, execute as Me, access Only myself.
-   Authorize it when asked.
-5. Run: goog auth script <the web app URL>`);
+4. Deploy → New deployment → the gear → Web app. Who has access: Anyone.
+   Deploy, then Authorize access → Advanced → Go to Untitled project (unsafe) →
+   Select all → Continue.
+5. Copy the Web app URL (ending in /exec) and send it back.
+
+The URL works like a password: ask for it through a secret-input tool if you
+have one, then run goog auth script <the file it's in, or - for stdin>.`);
       return;
     }
+    if (!arg) {
+      out(`goog needs the user to sign in once (about a minute). Put these steps in
+your reply to them as they are, link included, then get the URL from them.
+
+1. Open this link, signed in to the Google account goog should use, and
+   click "Make a copy":
+   ${BROKER_TEMPLATE}
+2. In the copy: Extensions → Apps Script → Deploy → New deployment → Deploy.
+3. Authorize access → Advanced → Go to googity goog (unsafe) → Select all →
+   Continue. "Unsafe" because Google hasn't reviewed it; it's their own copy.
+4. Copy the Web app URL (the bottom one, ending in /exec) and send it back.
+
+The URL works like a password. If you have a tool for asking the user for a
+secret, ask for it with that instead of in the chat, and hand goog the file
+(or stdin) rather than the URL itself.
+
+If Apps Script won't open, they're signed in to several Google accounts:
+a private window with only this one fixes it.
+
+Then run: goog auth script <the /exec URL, or a file holding it, or - to
+read it from stdin>
+Never put the URL in repos, commits or logs.
+If it leaks: Deploy → Manage deployments → Archive stops the URL, and
+removing the script at myaccount.google.com/permissions ends the tokens it
+already gave out.
+No template: goog auth script --manual.`);
+      return;
+    }
+    // The URL works like a password, so it can come from a file (or stdin, as
+    // "-") and stay out of the command line and the agent's transcript.
+    // A phone may capitalise the paste; the scheme and host don't care, the
+    // deployment id does.
+    const tidy = (u: string) => u.trim().replace(/^https?:\/\/[^/]*/i, (origin) => origin.toLowerCase());
+    let url = tidy(arg);
+    if (url === "-" && process.stdin.isTTY) throw new Error("goog auth script - reads the URL from stdin; pipe it in");
+    if (!/^https?:/.test(url)) {
+      try {
+        url = tidy(readFileSync(url === "-" ? 0 : url, "utf8"));
+      } catch (e: any) {
+        // Not quoting it: it may be the URL, mistyped.
+        if (e.code !== "ENOENT") throw new Error(`couldn't read that file (${e.code ?? "unknown error"})`);
+        throw new Error("pass the /exec URL, a file holding it, or - to read it from stdin");
+      }
+      if (!url) throw new Error(arg.trim() === "-" ? "nothing came in on stdin" : "that file is empty");
+    }
+    if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) throw new Error("that isn't an Apps Script web app URL (https://script.google.com/…/exec)");
     const cfg = loadConfig();
     const before = structuredClone(cfg);
-    cfg.broker = arg;
+    cfg.broker = url;
     delete cfg.client;
     saveConfig(cfg);
     forgetToken(); // the cached token came from the old sign-in
@@ -392,7 +448,7 @@ ${JSON.stringify(BROKER_MANIFEST, null, 2)}
     out("goog auth: OK");
     return;
   }
-  throw new Error(`unknown auth command "${sub}"`);
+  throw new Error("unknown auth command; it's status, script, import or client"); // not quoting it: it may be a secret
 }
 
 
@@ -810,6 +866,7 @@ export async function main(argv: string[]) {
       to: {type: "string"},
       type: {type: "boolean"},
       wpm: {type: "string"},
+      manual: {type: "boolean"},
     },
   });
   const asJson = !!flags.json;
@@ -827,7 +884,7 @@ export async function main(argv: string[]) {
     case "skill":
       return cmdSkill(pos[0], !!flags.force, asJson);
     case "auth":
-      return cmdAuth(pos);
+      return cmdAuth(pos, !!flags.manual);
     case "edit": {
       const ref = await docRef(need(pos[0], "goog edit <doc> [-o FILE] [--bg]"));
       if (flags.pull && flags.push) throw new Error("pick one of --pull and --push");

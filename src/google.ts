@@ -112,15 +112,20 @@ async function whatIs(url: string): Promise<string | null> {
 }
 
 // Turns Google's terse messages into ones that say what to do.
+// A sign-in keeps the scopes it was granted: running goog auth script again
+// with the same URL brings the same token, and the permission screen only
+// comes back once the old grant is gone.
+export const regrant = "the sign-in wasn't granted that scope. For goog auth script, remove the script's access at myaccount.google.com/permissions, then open the script and click Run, which asks for the permissions again; for goog auth client, run it again and allow everything";
+
 function explain(status: number, msg: string, url: string): string {
   const id = /\/documents\/([\w-]+)|\/files\/([\w-]+)/.exec(url);
   const doc = id ? `doc ${id[1] ?? id[2]}` : "that file";
-  if (status === 401) return `Google rejected the sign-in (${msg}); run goog auth to set it up again`;
-  if (status === 403 && /has not been used|is disabled/.test(msg)) return `${msg}\n(the API isn't enabled for the token's Cloud project)`;
+  if (status === 401) return `Google rejected the sign-in (${msg}); sign in again with goog auth script`;
+  if (status === 403 && /has not been used|is disabled/.test(msg)) return `${msg}\n(the API isn't enabled for the token's Cloud project; through goog auth script, Forms never is)`;
   if (status === 403 && /insufficient|scope/i.test(msg) && url.includes("classroom.googleapis.com")) {
-    return `the token can't read Classroom (${msg}); goog classroom needs the classroom.courses.readonly and classroom.coursework.me.readonly scopes, so sign in again with goog auth`;
+    return `the token can't read Classroom (${msg}); goog classroom needs the classroom.courses.readonly and classroom.coursework.me.readonly scopes, and ${regrant}`;
   }
-  if (status === 403 && /insufficient|scope/i.test(msg)) return `the token isn't allowed to do this (${msg}); run goog auth again with the drive scope`;
+  if (status === 403 && /insufficient|scope/i.test(msg)) return `the token isn't allowed to do this (${msg}); ${regrant}`;
   if (status === 403) return `no permission for ${doc}: ${msg}. Check it's shared with the signed-in account (with edit access, to push).`;
   if (status === 404 && url.includes("classroom.googleapis.com")) return "that class or assignment wasn't found; check the link, or goog classroom classes for your classes";
   if (status === 404) return `${doc} wasn't found. Check the id, or that it's shared with the signed-in account.`;

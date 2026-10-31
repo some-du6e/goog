@@ -9,7 +9,7 @@
 import {readFileSync} from "node:fs";
 import {parseArgs} from "node:util";
 import {forgetToken, getToken} from "./auth.ts";
-import {backoff} from "./google.ts";
+import {backoff, regrant} from "./google.ts";
 
 const API_USAGE = "goog api <path> [-X METHOD] [-f key=value] [-F key=value] [--query key=value] [--input FILE] [-H 'Name: value'] [--paginate] [--silent]";
 
@@ -360,8 +360,8 @@ function show(a: Answer, silent: boolean, method = "GET") {
   const msg = parsed?.error?.message
     ?? (/html/i.test(a.type) ? /<title>([^<]*)<\/title>/i.exec(text)?.[1]?.trim() : isText(a.type) ? text.trim().slice(0, 300) : undefined)
     ?? "";
-  const hint = a.status === 401 ? "; run goog auth to sign in again"
-    : a.status === 403 && /scope/i.test(msg) ? "; the token's scopes don't cover this API (goog auth status)"
+  const hint = a.status === 401 ? "; sign in again with goog auth script"
+    : a.status === 403 && /scope/i.test(msg) ? `; ${regrant}`
     // A write isn't resent after a 5xx (see request()), but it may have run.
     : a.status >= 500 && method !== "GET" ? "; the write may still have gone through"
     : (a.status === 404 || a.status === 405) && /html/i.test(a.type) ? "; no such API path (check the service, version and method name)"
