@@ -56,7 +56,7 @@ export function installSkill(force = false): {agent: string; dir: string; state:
   });
 }
 
-export function removeSkill(): {agent: string; dir: string; done: boolean}[] {
+export function removeSkill(): {agent: string; dir: string; state: SkillState; done: boolean}[] {
   return skillStatus().map((s) => {
     if (s.state !== "installed" && !dangling(s.dir)) return {...s, done: false};
     rmSync(s.dir);
