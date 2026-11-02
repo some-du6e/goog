@@ -283,12 +283,17 @@ npm run typecheck
 ```
 
 A checkout runs on Node 24's built-in TypeScript support, with no build step.
-Node won't run TypeScript under `node_modules`, so the npm package is compiled
-to `dist/` (`npm run build`, run by `npm pack` and `npm publish`).
+To run it as `goog`, link its `bin/goog.ts` onto your PATH
+(`ln -s "$PWD/bin/goog.ts" ~/.local/bin/goog`); `npm link` would point at the
+compiled `dist/` instead. Node won't run TypeScript under `node_modules`, so
+the npm package is compiled to `dist/` (`npm run build`, run by `npm pack`).
+`test/package.sh` checks an installed package.
 
 To release, bump `version` in package.json, then push a matching tag
-(`git tag v0.2.0 && git push origin v0.2.0`). The publish workflow tests it
-and publishes to npm through trusted publishing, with no npm token.
+on main (`git tag v0.2.0 && git push origin v0.2.0`). The publish workflow
+tests it and publishes to npm through trusted publishing, with no npm token; a
+pre-release version (`v0.2.0-beta.1`) goes out under the `next` tag. Running
+the workflow by hand does everything but publish.
 
 Planned: Sheets.
 

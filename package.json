@@ -1,7 +1,7 @@
 {
   "name": "goog-cli",
   "version": "0.1.0",
-  "description": "Edit Google Docs and Slides as text files, built for agents",
+  "description": "Edit Google Docs and Slides as local .goog files",
   "type": "module",
   "bin": {
     "goog": "dist/bin/goog.js"

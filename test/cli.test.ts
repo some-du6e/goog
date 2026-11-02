@@ -3,13 +3,14 @@
 
 import assert from "node:assert/strict";
 import {execFileSync, spawnSync} from "node:child_process";
-import {existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync} from "node:fs";
+import {existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
-import {join} from "node:path";
+import {dirname, join, resolve} from "node:path";
 import {test} from "node:test";
 
 const tmp = mkdtempSync(join(tmpdir(), "goog-cli-test-"));
-const bin = new URL("../bin/goog.ts", import.meta.url).pathname;
+// GOOG_BIN runs these against an installed package (CI's package job) instead.
+const bin = process.env.GOOG_BIN ?? new URL("../bin/goog.ts", import.meta.url).pathname;
 const env = {...process.env, GOOG_CACHE_DIR: join(tmp, "cache"), GOOG_CONFIG_DIR: join(tmp, "config"), GOOG_TOKEN: "offline-test", GOOG_AGENT_HOME: join(tmp, "home")};
 const goog = (...args: string[]) => spawnSync(process.execPath, [bin, ...args], {cwd: tmp, env, encoding: "utf8"});
 
@@ -107,11 +108,35 @@ test("skill: hint until installed, then a symlink per agent", () => {
   assert.match(goog("help").stdout, /goog skill install/);
   assert.match(goog("skill").stdout, /Claude Code: not installed/);
   assert.match(goog("skill", "install").stdout, /installed for Claude Code/);
-  assert.equal(readlinkSync(join(home, ".claude/skills/goog")), new URL("../skill", import.meta.url).pathname);
+  assert.equal(readlinkSync(join(home, ".claude/skills/goog")), resolve(dirname(bin), "../skill"));
+  assert.ok(existsSync(join(home, ".claude/skills/goog/SKILL.md")));
   assert.equal(existsSync(join(home, ".codex")), false); // agents that aren't set up are left alone
   assert.doesNotMatch(goog("help").stdout, /goog skill install/);
   assert.match(goog("skill", "remove").stdout, /removed from Claude Code/);
   assert.equal(existsSync(join(home, ".claude/skills/goog")), false);
+});
+
+test("skill: install replaces a dangling link or another goog's, not someone else's", () => {
+  const home = join(tmp, "home");
+  const link = join(home, ".claude/skills/goog");
+  mkdirSync(join(home, ".claude/skills"), {recursive: true});
+  const other = join(tmp, "other-goog");
+  mkdirSync(other, {recursive: true});
+  writeFileSync(join(other, "SKILL.md"), "---\nname: goog\ndescription: an older copy\n---\n");
+  for (const target of [join(tmp, "gone"), other]) {
+    rmSync(link, {force: true});
+    symlinkSync(target, link);
+    assert.match(goog("skill", "install").stdout, /installed for Claude Code/);
+    assert.equal(readlinkSync(link), resolve(dirname(bin), "../skill"));
+  }
+  const theirs = join(tmp, "their-skill");
+  mkdirSync(theirs, {recursive: true});
+  writeFileSync(join(theirs, "SKILL.md"), "---\nname: something-else\n---\n");
+  rmSync(link, {force: true});
+  symlinkSync(theirs, link);
+  assert.doesNotMatch(goog("skill", "install").stdout, /installed for Claude Code/);
+  assert.equal(readlinkSync(link), theirs);
+  rmSync(link, {force: true});
 });
 
 test("wait: --timeout takes seconds or minutes, and refuses anything else", () => {

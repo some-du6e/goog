@@ -26,7 +26,7 @@ esac
 chmodSync(join(bin, "mutool"), 0o755);
 process.env.PATH = `${bin}:${process.env.PATH}`;
 
-const {claim, saveDeckImages, drawingPid, drawInBackground, drawNow, waitForDrawing} = await import("../src/slides.ts");
+const {BIN, claim, saveDeckImages, drawingPid, drawInBackground, drawNow, waitForDrawing} = await import("../src/slides.ts");
 const {fromApi} = await import("../src/slides-read.ts");
 const {startedAt} = await import("../src/proc.ts");
 
@@ -161,6 +161,10 @@ test("pictures: a draw's mark names one live process", async () => {
   rmSync(join(dir, ".drawing"));
   writeFileSync(join(dir, ".draw-error"), "goog: the deck is gone\n");
   assert.deepEqual(await waitForDrawing(dir, 1000), {status: "failed", message: "drawing the slides failed: the deck is gone"});
+});
+
+test("pictures: the detached draw runs a goog that exists", () => {
+  assert.ok(existsSync(BIN), BIN);
 });
 
 test("pictures: a sync during a draw asks it to go round again instead of starting another", () => {

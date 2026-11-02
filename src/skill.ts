@@ -5,7 +5,7 @@
 // The skill is a symlink to this package's skill/ directory, so it updates
 // along with goog.
 
-import {existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync} from "node:fs";
+import {existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync} from "node:fs";
 import {homedir} from "node:os";
 import {join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -25,11 +25,18 @@ function agentDirs(): {agent: string; dir: string}[] {
 
 export type SkillState = "installed" | "missing" | "other"; // other: a goog skill goog didn't put there
 
+// A link to another copy of goog's skill (a checkout's, an older npm install's
+// under another Node version) or a link left dangling by an uninstall counts as
+// missing, so install replaces it with this goog's.
 function stateOf(dir: string): SkillState {
   try {
     const st = lstatSync(dir);
-    if (st.isSymbolicLink() && resolve(join(dir, ".."), readlinkSync(dir)) === SOURCE) return "installed";
-    return "other";
+    if (!st.isSymbolicLink()) return "other";
+    const target = resolve(join(dir, ".."), readlinkSync(dir));
+    if (target === SOURCE) return "installed";
+    if (!existsSync(target)) return "missing";
+    const skill = join(target, "SKILL.md");
+    return existsSync(skill) && /^---\nname: goog\n/.test(readFileSync(skill, "utf8")) ? "missing" : "other";
   } catch {
     return "missing";
   }

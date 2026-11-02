@@ -208,7 +208,7 @@ export async function saveDeckImages(remote: RemoteDeck, dir: string): Promise<{
 // time: a sync while it runs leaves <dir>/.redraw, and the draw goes round
 // again once it's done, so a deck saved every few seconds still gets drawn.
 // The checkout runs goog.ts; the npm package runs the compiled goog.js.
-const BIN = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "../bin/goog.ts" : "../bin/goog.js", import.meta.url));
+export const BIN = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "../bin/goog.ts" : "../bin/goog.js", import.meta.url));
 const drawingPath = (dir: string) => join(dir, ".drawing");
 const redrawPath = (dir: string) => join(dir, ".redraw");
 const drawErrorPath = (dir: string) => join(dir, ".draw-error");
