@@ -133,7 +133,7 @@ Classroom
   Times are this machine's time zone; --json gives due in UTC and dueLocal.
   goog skill [install|remove]   the skill that teaches coding agents (Claude Code,
                                 Codex) to edit docs with goog; status if none given
-      --force                   install over a skill of the same name that isn't goog's
+      --force                   install over another goog skill (another copy's, or hand-made)
 
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
@@ -276,21 +276,21 @@ function cmdSkill(sub: string | undefined, force: boolean, asJson: boolean) {
     for (const a of r) {
       out(a.done ? `installed for ${a.agent}: ${a.dir}`
         : a.state === "installed" ? `already installed for ${a.agent}`
-        : `${a.dir} already exists and isn't goog's; goog skill install --force replaces it`);
+        : `${a.dir} is another goog skill (another copy's, or hand-made); goog skill install --force replaces it`);
     }
     return;
   }
   if (sub === "remove") {
     const r = removeSkill();
     if (asJson) return json({ok: true, agents: r});
-    for (const a of r) out(a.done ? `removed from ${a.agent}` : `not installed for ${a.agent}`);
+    for (const a of r) out(a.done ? `removed from ${a.agent}` : a.state === "other" ? `${a.dir} isn't this goog's skill; left alone` : `not installed for ${a.agent}`);
     return;
   }
   if (sub && sub !== "status") throw new Error(`unknown goog skill command "${sub}"; use install, remove, or nothing for status`);
   const st = skillStatus();
   if (asJson) return json({ok: true, agents: st});
   if (!st.length) return out("no coding agents found (looked for ~/.claude and ~/.codex)");
-  for (const a of st) out(`${a.agent}: ${a.state === "installed" ? "installed" : a.state === "missing" ? "not installed (goog skill install)" : `${a.dir} is someone else's skill`}`);
+  for (const a of st) out(`${a.agent}: ${a.state === "installed" ? "installed" : a.state === "missing" ? "not installed (goog skill install)" : `${a.dir} is another goog skill (another copy's, or hand-made)`}`);
 }
 
 function out(s: string) {

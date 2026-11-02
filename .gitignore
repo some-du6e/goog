@@ -2,3 +2,4 @@ node_modules/
 *.goog
 .agent-notes/
 dist/
+*.tgz
