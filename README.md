@@ -294,5 +294,4 @@ Planned: Sheets.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE.md): use it, change it, share it and
-build on it, but not for commercial purposes.
+[MIT](LICENSE).

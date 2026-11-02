@@ -14,7 +14,7 @@
     "url": "git+https://github.com/some-du6e/goog.git"
   },
   "homepage": "https://github.com/some-du6e/goog",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "MIT",
   "scripts": {
     "test": "node --test 'test/*.test.ts'",
     "typecheck": "tsc --noEmit",
