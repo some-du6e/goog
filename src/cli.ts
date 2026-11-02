@@ -116,7 +116,8 @@ Classroom
                                 or the words, images and ticks added to the teacher's
                                 template (reads each doc, so a few seconds)
   goog classroom <assignment>   one assignment: instructions, the teacher's files,
-                                and yours, with its progress
+                                and yours, with its progress. A class material's
+                                link works too
   goog classroom classes        your active classes
   goog transcript <video|assignment>
                                 what a YouTube video says, a line per 30s with its
@@ -673,7 +674,8 @@ function outWork(w: Work, full: boolean, instructions = false) {
   // Undated work says when it was set, which also tells apart assignments
   // that share a title.
   const due = w.dueLocal ? `due ${w.dueLocal}` : `no due date, set ${new Date(w.created).toLocaleDateString("en-US", {month: "short", day: "numeric"})}`;
-  const state = w.missing ? `missing, ${w.daysLate} day${w.daysLate === 1 ? "" : "s"} late` : w.state === "assigned" ? "not turned in" : w.state;
+  const state = w.type === "material" ? "class material, nothing to turn in"
+    : w.missing ? `missing, ${w.daysLate} day${w.daysLate === 1 ? "" : "s"} late` : w.state === "assigned" ? "not turned in" : w.state;
   out(`${w.course} › ${w.title}`);
   out(`  ${[due, state, w.points ? `${w.points} pts` : "", `id ${w.courseId}/${w.id}`].filter(Boolean).join(" · ")}`);
   const about = w.description?.trim().replace(/\s+/g, " ");
@@ -681,7 +683,7 @@ function outWork(w: Work, full: boolean, instructions = false) {
   const unreadable = (a: Attachment) => (a.readable || a.kind === "youtube" || a.kind === "link" ? "" : " (goog can't open it)");
   if (full) {
     out(`  ${w.url}`);
-    out(w.description?.trim() ? `\n${w.description.trim().replace(/^/gm, "  ")}\n` : `  no instructions on the assignment${w.materials.length ? "; they're likely in the teacher's files" : ""}`);
+    out(w.description?.trim() ? `\n${w.description.trim().replace(/^/gm, "  ")}\n` : `  no instructions on the ${w.type === "material" ? "material" : "assignment"}${w.materials.length ? "; they're likely in the teacher's files" : ""}`);
     const share: Record<string, string> = {"student-copy": " (template: you get your own copy)", edit: " (shared to edit)"};
     for (const a of w.materials) out(`  teacher's ${a.kind}${share[a.share ?? ""] ?? ""}: ${a.title}  ${a.url}${unreadable(a)}`);
     for (const v of w.videos ?? []) out(`  video linked in "${v.in}": ${v.url}`);

@@ -123,7 +123,7 @@ function explain(status: number, msg: string, url: string): string {
   if (status === 401) return `Google rejected the sign-in (${msg}); sign in again with goog auth script`;
   if (status === 403 && /has not been used|is disabled/.test(msg)) return `${msg}\n(the API isn't enabled for the token's Cloud project; through goog auth script, Forms never is)`;
   if (status === 403 && /insufficient|scope/i.test(msg) && url.includes("classroom.googleapis.com")) {
-    return `the token can't read Classroom (${msg}); goog classroom needs the classroom.courses.readonly and classroom.coursework.me.readonly scopes, and ${regrant}`;
+    return `the token can't read Classroom (${msg}); goog classroom needs the classroom.courses.readonly and classroom.coursework.me.readonly scopes, class materials need classroom.courseworkmaterials.readonly, and ${regrant}`;
   }
   if (status === 403 && /insufficient|scope/i.test(msg)) return `the token isn't allowed to do this (${msg}); ${regrant}`;
   if (status === 403) return `no permission for ${doc}: ${msg}. Check it's shared with the signed-in account (with edit access, to push).`;

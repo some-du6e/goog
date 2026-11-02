@@ -174,7 +174,7 @@ you've added to the teacher's template.
 `goog classroom <assignment link>` shows one assignment's instructions, the
 teacher's files and yours, with how far along yours are (words, images and
 ticked boxes added to the template) and any YouTube videos the teacher's files
-link to. `goog edit`, `pull`, `cat` and `open` take an
+link to. A class material's link works the same way. `goog edit`, `pull`, `cat` and `open` take an
 assignment link too and open your Doc or Slides copy in it. It's read-only:
 turning work in stays in Classroom.
 
@@ -244,7 +244,8 @@ you fix them.
 - `goog auth import token.json`: reuse a refresh token another tool already
   has (a google-auth `authorized_user` file). Its scopes need `drive`, and
   `goog classroom` needs `classroom.courses.readonly` and
-  `classroom.coursework.me.readonly` (or `classroom.coursework.me`).
+  `classroom.coursework.me.readonly` (or `classroom.coursework.me`), plus
+  `classroom.courseworkmaterials.readonly` for class materials.
 - `goog auth script`: an Apps Script web app in your own Drive returns an
   OAuth token. No Google Cloud project needed, which matters for school
   accounts. `goog auth script` prints the steps: copy a template Sheet (its

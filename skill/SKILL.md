@@ -29,7 +29,8 @@ tool if you have one, give goog the file it lands in (`goog auth script
 
 For a Google Classroom assignment link, `goog pull <assignment link>` pulls
 your own copy of its doc; `goog classroom <assignment link>` prints the
-instructions and every file (read the teacher's with `goog cat`).
+instructions and every file (read the teacher's with `goog cat`); a class
+material's link (`/m/`) works the same way.
 `goog classroom` lists what's left to do (`--due 7` for this week); add `--progress` to see which of
 your copies are still blank (it compares each with the teacher's template).
 Drawings, Sheets and PDFs are marked "goog can't open it". When the work comes from a

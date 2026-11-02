@@ -10,7 +10,7 @@ test("parseWorkRef: Classroom links and courseId/workId", () => {
   assert.equal(parseWorkRef("https://docs.google.com/document/d/abc/edit"), null);
   assert.equal(parseWorkRef("notes.goog"), null);
   assert.throws(() => parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy"), /isn't a Classroom assignment link/);
-  assert.throws(() => parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/m/ODgzMDg4ODUwMzE3/details"), /class material, not an assignment/);
+  assert.deepEqual(parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/m/ODgzMDg4ODUwMzE3/details"), {...want, material: true});
 });
 
 test("parseCourseRef: a class's link", () => {
@@ -18,6 +18,8 @@ test("parseCourseRef: a class's link", () => {
   assert.equal(parseCourseRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/a/ODgzMDg4ODUwMzE3/details"), null);
   assert.equal(parseCourseRef(" classroom.google.com/w/NzkzMzQ3NjY4NTAy/t/all"), "793347668502");
   assert.equal(parseCourseRef("Science"), null);
+  assert.equal(parseCourseRef("NzkzMzQ3NjY4NTAy"), "793347668502");
+  assert.equal(parseCourseRef("computerscience"), null);
 });
 
 test("dueOf: Classroom's JSON leaves out zero hours and minutes", () => {
