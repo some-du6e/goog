@@ -3,14 +3,13 @@ import {mkdtempSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
+import type {Attachment, Work} from "../src/classroom.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "goog-classroom-test-"));
 process.env.GOOG_CACHE_DIR = join(tmp, "cache");
 process.env.GOOG_CONFIG_DIR = join(tmp, "config");
 process.env.GOOG_TOKEN = "offline-test";
 const {addedWords, dueOf, editable, getWork, isBlank, isTodo, marks, parseCourseRef, parseWorkRef, refOf, videosIn, words} = await import("../src/classroom.ts");
-type Work = import("../src/classroom.ts").Work;
-type Attachment = import("../src/classroom.ts").Attachment;
 
 test("parseWorkRef: Classroom links and courseId/workId", () => {
   const want = {courseId: "793347668502", id: "883088850317"};

@@ -128,7 +128,8 @@ Classroom
                                 --from 2:00 --to 15:35 keeps just that part
   <assignment> is its classroom.google.com link or the COURSE/WORK pair listed;
   a class material's link or COURSE/m/WORK works too. goog edit, pull, cat and
-  open take an <assignment> too, for your Doc or Slides copy in it. States: not turned in, missing (past due), turned-in, returned.
+  open take an <assignment> too, for your Doc or Slides copy in it. States: not
+  turned in, missing (past due), turned-in, returned.
   Times are this machine's time zone; --json gives due in UTC and dueLocal.
   goog skill [install|remove]   the skill that teaches coding agents (Claude Code,
                                 Codex) to edit docs with goog; status if none given
