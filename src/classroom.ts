@@ -2,8 +2,8 @@
 //
 // A student's own copy of a "make a copy for each student" doc is in the
 // submission's attachments, not the assignment's materials; that copy is the
-// one to goog edit. The imported token has the classroom.*.readonly and
-// coursework.me scopes.
+// one to goog edit. Reading takes the classroom.*.readonly scopes
+// (courseworkmaterials.readonly for class materials) and coursework.me.
 
 import {backends} from "./backend.ts";
 import {parseVideo} from "./youtube.ts";
@@ -37,7 +37,7 @@ export interface Work {
   id: string;
   title: string;
   url: string;
-  type: string; // assignment, question, …
+  type: string; // assignment, question, …, or material (nothing to turn in)
   due?: string; // ISO time in UTC, when there's a due date
   dueLocal?: string; // the same in this machine's time zone, as text shows it
   created: string;
@@ -73,25 +73,27 @@ function classroomPath(arg: string): string | null {
 const unBase64 = (s: string) => (/^\d+$/.test(s) ? s : Buffer.from(s, "base64url").toString("utf8"));
 
 // classroom.google.com/c/<base64 course id>/a/<base64 work id>/details, or
-// courseId/workId. Questions are /sa/ and /mc/.
-export function parseWorkRef(arg: string): {courseId: string; id: string} | null {
-  const plain = /^(\d+)\/(\d+)$/.exec(arg.trim());
-  if (plain) return {courseId: plain[1], id: plain[2]};
+// courseId/workId. Questions are /sa/ and /mc/, class materials /m/ (and
+// courseId/m/id).
+export const refOf = (w: Work) => `${w.courseId}/${w.type === "material" ? "m/" : ""}${w.id}`;
+export function parseWorkRef(arg: string): {courseId: string; id: string; material?: true} | null {
+  const plain = /^(\d+)\/(m\/)?(\d+)$/.exec(arg.trim());
+  if (plain) return {courseId: plain[1], id: plain[3], ...(plain[2] && {material: true as const})};
   const path = classroomPath(arg);
   if (path === null) return null;
-  if (/^\/c\/[\w-]+\/m\//.test(path)) throw new Error(`"${arg}" is a class material, not an assignment; goog reads assignments, so open its files' own links`);
-  const m = /^\/c\/([\w-]+)\/(?:a|sa|mc)\/([\w-]+)/.exec(path);
+  const m = /^\/c\/([\w-]+)\/(a|sa|mc|m)\/([\w-]+)/.exec(path);
   if (!m) throw new Error(`"${arg}" isn't a Classroom assignment link; open the assignment and copy its URL`);
-  const [courseId, id] = [unBase64(m[1]), unBase64(m[2])];
+  const [courseId, id] = [unBase64(m[1]), unBase64(m[3])];
   if (!/^\d+$/.test(courseId) || !/^\d+$/.test(id)) throw new Error(`can't find the course and assignment ids in "${arg}"`);
-  return {courseId, id};
+  return {courseId, id, ...(m[2] === "m" && {material: true as const})};
 }
 
 // A class's link: its stream (/c/<base64 course id>), Classwork (/w/<id>/t/all)
 // or People (/r/<id>/…) page. Its id.
 export function parseCourseRef(arg: string): string | null {
-  const path = classroomPath(arg) ?? "";
-  const m = /^\/c\/([\w-]+)\/?$/.exec(path) ?? /^\/[wr]\/([\w-]+)(?:\/|$)/.exec(path);
+  const path = classroomPath(arg);
+  // Or the base64 id alone, as copied out of such a link.
+  const m = path === null ? /^([\w-]{12,})$/.exec(arg.trim()) : /^\/c\/([\w-]+)\/?$/.exec(path) ?? /^\/[wr]\/([\w-]+)(?:\/|$)/.exec(path);
   const id = m ? unBase64(m[1]) : "";
   return /^\d+$/.test(id) ? id : null;
 }
@@ -204,13 +206,15 @@ export async function listWork(match?: string): Promise<Work[]> {
   return stripName(per.flat().sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0)));
 }
 
-export async function getWork(ref: {courseId: string; id: string}): Promise<Work> {
+// A class material has nothing to hand in, so no submission.
+export async function getWork(ref: {courseId: string; id: string; material?: true}): Promise<Work> {
+  const at = `${CLASSROOM}/courses/${ref.courseId}`;
   const [course, cw, subs] = await Promise.all([
-    api("GET", `${CLASSROOM}/courses/${ref.courseId}`),
-    api("GET", `${CLASSROOM}/courses/${ref.courseId}/courseWork/${ref.id}`),
-    all(`${CLASSROOM}/courses/${ref.courseId}/courseWork/${ref.id}/studentSubmissions?userId=me`, "studentSubmissions"),
+    api("GET", at),
+    api("GET", `${at}/${ref.material ? "courseWorkMaterials" : "courseWork"}/${ref.id}`),
+    ref.material ? [] : all(`${at}/courseWork/${ref.id}/studentSubmissions?userId=me`, "studentSubmissions"),
   ]);
-  const w = toWork({id: course.id, name: courseName(course)}, cw, subs[0]);
+  const w = toWork({id: course.id, name: courseName(course)}, ref.material ? {...cw, workType: "material"} : cw, subs[0]);
   return (await stripName([w]))[0];
 }
 
