@@ -3,13 +3,14 @@
 
 import assert from "node:assert/strict";
 import {execFileSync, spawnSync} from "node:child_process";
-import {existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync} from "node:fs";
+import {existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
-import {join} from "node:path";
+import {dirname, join, resolve} from "node:path";
 import {test} from "node:test";
 
 const tmp = mkdtempSync(join(tmpdir(), "goog-cli-test-"));
-const bin = new URL("../bin/goog.ts", import.meta.url).pathname;
+// GOOG_BIN runs these against an installed package (CI's package job) instead.
+const bin = process.env.GOOG_BIN ?? new URL("../bin/goog.ts", import.meta.url).pathname;
 const env = {...process.env, GOOG_CACHE_DIR: join(tmp, "cache"), GOOG_CONFIG_DIR: join(tmp, "config"), GOOG_TOKEN: "offline-test", GOOG_AGENT_HOME: join(tmp, "home")};
 const goog = (...args: string[]) => spawnSync(process.execPath, [bin, ...args], {cwd: tmp, env, encoding: "utf8"});
 
@@ -107,11 +108,40 @@ test("skill: hint until installed, then a symlink per agent", () => {
   assert.match(goog("help").stdout, /goog skill install/);
   assert.match(goog("skill").stdout, /Claude Code: not installed/);
   assert.match(goog("skill", "install").stdout, /installed for Claude Code/);
-  assert.equal(readlinkSync(join(home, ".claude/skills/goog")), new URL("../skill", import.meta.url).pathname);
+  assert.equal(readlinkSync(join(home, ".claude/skills/goog")), resolve(dirname(bin), "../skill"));
+  assert.ok(existsSync(join(home, ".claude/skills/goog/SKILL.md")));
   assert.equal(existsSync(join(home, ".codex")), false); // agents that aren't set up are left alone
   assert.doesNotMatch(goog("help").stdout, /goog skill install/);
   assert.match(goog("skill", "remove").stdout, /removed from Claude Code/);
   assert.equal(existsSync(join(home, ".claude/skills/goog")), false);
+});
+
+test("skill: a dangling link is replaced and removed; anyone else's link is left alone", () => {
+  const home = join(tmp, "home");
+  const link = join(home, ".claude/skills/goog");
+  mkdirSync(join(home, ".claude/skills"), {recursive: true});
+  rmSync(link, {force: true});
+  symlinkSync(join(tmp, "gone"), link);
+  assert.match(goog("help").stdout, /goog skill install/);
+  assert.match(goog("skill", "install").stdout, /installed for Claude Code/);
+  assert.equal(readlinkSync(link), resolve(dirname(bin), "../skill"));
+  rmSync(link);
+  symlinkSync(join(tmp, "gone"), link);
+  assert.match(goog("skill", "remove").stdout, /removed from Claude Code/);
+  assert.equal(lstatSync(link, {throwIfNoEntry: false}), undefined);
+  // Another goog's skill, or a hand-made one: only --force replaces it.
+  const theirs = join(tmp, "their-skill");
+  mkdirSync(theirs, {recursive: true});
+  writeFileSync(join(theirs, "SKILL.md"), "---\nname: goog\n---\n");
+  symlinkSync(theirs, link);
+  assert.doesNotMatch(goog("help").stdout, /goog skill install/);
+  assert.match(goog("skill", "install").stdout, /another goog skill.*--force replaces it/);
+  assert.equal(readlinkSync(link), theirs);
+  assert.match(goog("skill", "remove").stdout, /left alone/);
+  assert.equal(readlinkSync(link), theirs);
+  assert.match(goog("skill", "install", "--force").stdout, /installed for Claude Code/);
+  assert.equal(readlinkSync(link), resolve(dirname(bin), "../skill"));
+  rmSync(link);
 });
 
 test("wait: --timeout takes seconds or minutes, and refuses anything else", () => {

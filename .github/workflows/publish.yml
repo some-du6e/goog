@@ -1,0 +1,58 @@
+# Publishes goog-cli to npm when a version tag (v0.2.0) is pushed on main. npm
+# trusts this workflow by name (trusted publishing), so no npm token is stored.
+# Run by hand, it does everything but publish.
+name: publish
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # Tests and packs with no publishing rights, so nothing npm ci installs or
+  # the tests run can get at the OIDC token.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Tag matches package.json and is on main
+        if: github.event_name == 'push'
+        run: |
+          test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - run: npm pack
+      - run: npm install -g ./goog-cli-*.tgz
+      - run: test/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package
+          path: goog-cli-*.tgz
+  # Publishes the tarball build tested, not a fresh pack.
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package
+      # A pre-release (v0.2.0-beta.1) goes out under "next", not "latest".
+      - run: |
+          tag=latest
+          case "$GITHUB_REF_NAME" in *-*) tag=next ;; esac
+          npm publish ./goog-cli-*.tgz --tag "$tag"

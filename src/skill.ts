@@ -23,17 +23,19 @@ function agentDirs(): {agent: string; dir: string}[] {
     .map((a) => ({agent: a.agent, dir: join(a.root, "skills", "goog")}));
 }
 
-export type SkillState = "installed" | "missing" | "other"; // other: a goog skill goog didn't put there
+export type SkillState = "installed" | "missing" | "other"; // other: a skill this goog didn't link, such as another goog copy's or a hand-made one
 
+// A link left dangling (that goog was uninstalled, or the Node version it was
+// installed under was removed) counts as missing, so install replaces it and
+// remove clears it.
 function stateOf(dir: string): SkillState {
-  try {
-    const st = lstatSync(dir);
-    if (st.isSymbolicLink() && resolve(join(dir, ".."), readlinkSync(dir)) === SOURCE) return "installed";
-    return "other";
-  } catch {
-    return "missing";
-  }
+  const st = lstatSync(dir, {throwIfNoEntry: false});
+  if (!st) return "missing";
+  if (st.isSymbolicLink() && resolve(join(dir, ".."), readlinkSync(dir)) === SOURCE) return "installed";
+  return dangling(dir) ? "missing" : "other";
 }
+
+const dangling = (dir: string) => !!lstatSync(dir, {throwIfNoEntry: false})?.isSymbolicLink() && !existsSync(dir);
 
 export function skillStatus(): {agent: string; dir: string; state: SkillState}[] {
   return agentDirs().map((a) => ({...a, state: stateOf(a.dir)}));
@@ -54,9 +56,9 @@ export function installSkill(force = false): {agent: string; dir: string; state:
   });
 }
 
-export function removeSkill(): {agent: string; dir: string; done: boolean}[] {
+export function removeSkill(): {agent: string; dir: string; state: SkillState; done: boolean}[] {
   return skillStatus().map((s) => {
-    if (s.state !== "installed") return {...s, done: false};
+    if (s.state !== "installed" && !dangling(s.dir)) return {...s, done: false};
     rmSync(s.dir);
     return {...s, done: true};
   });

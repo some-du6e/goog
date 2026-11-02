@@ -1,14 +1,25 @@
 {
-  "name": "goog",
+  "name": "goog-cli",
   "version": "0.1.0",
   "description": "Edit Google Docs and Slides as local .goog files",
   "type": "module",
   "bin": {
-    "goog": "bin/goog.ts"
+    "goog": "dist/bin/goog.js"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/some-du6e/goog.git"
+  },
+  "homepage": "https://github.com/some-du6e/goog",
+  "license": "MIT",
   "scripts": {
     "test": "node --test 'test/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp -r skill dist/skill",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=24"
