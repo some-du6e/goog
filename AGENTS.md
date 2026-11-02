@@ -1,7 +1,10 @@
 # Developing goog
 
 goog edits Google Docs and Slides as `.goog` text files through their APIs. `goog` on
-PATH is a link to this checkout, so it always runs the code here. README.md is
+PATH is a link to this checkout's bin/goog.ts, so it always runs the code
+here. The npm package (goog-cli) is the same code compiled to dist/, since
+Node won't strip types under node_modules; a path a module finds from
+`import.meta.url` has to work from both (see `BIN` in slides.ts). README.md is
 the user's view. `goog help`, `goog help format`, `goog help slides` (HELP, FORMAT_HELP and
 SLIDES_HELP in src/cli.ts), and the
 agent skill in skill/SKILL.md (installed by `goog skill install`) are what

@@ -6,6 +6,12 @@ changed goes up; edits made in the browser come back down. Agents can edit the
 file with plain find-and-replace.
 
 ```sh
+npm install -g goog-cli    # needs Node 24; the command is `goog`
+goog auth script           # sign in (see Auth below)
+goog skill install         # optional: teach Claude Code and Codex to use it
+```
+
+```sh
 goog edit https://docs.google.com/document/d/DOC_ID/edit   # pull + live sync (Ctrl+C stops)
 goog edit DOC_ID --bg      # same, in the background; returns once the first sync is done
 goog wait DOC_ID.goog      # after a save: wait for the push; exit 1 on error, 2 on conflict
@@ -276,6 +282,12 @@ npm test            # formats, planners (Docs against a simulated API), sync, CL
 npm run typecheck
 ```
 
-Runs on Node 24's built-in TypeScript support, with no build step.
+A checkout runs on Node 24's built-in TypeScript support, with no build step.
+Node won't run TypeScript under `node_modules`, so the npm package is compiled
+to `dist/` (`npm run build`, run by `npm pack` and `npm publish`).
+
+To release, bump `version` in package.json, then push a matching tag
+(`git tag v0.2.0 && git push origin v0.2.0`). The publish workflow tests it
+and publishes to npm through trusted publishing, with no npm token.
 
 Planned: Sheets.
