@@ -8,7 +8,7 @@ import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
 import {backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError} from "./format.ts";
-import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseCourseRef, parseWorkRef, type Attachment, type Work} from "./classroom.ts";
+import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseCourseRef, parseWorkRef, refOf, type Attachment, type Work} from "./classroom.ts";
 import {createDoc} from "./gdocs.ts";
 import {clock, parseVideo, timed, transcript} from "./youtube.ts";
 import {createDeck, drawNow, drawingPid, waitForDrawing} from "./slides.ts";
@@ -126,9 +126,9 @@ Classroom
                                 when there are some, else YouTube's automatic ones;
                                 --lang es picks another language the video has;
                                 --from 2:00 --to 15:35 keeps just that part
-  <assignment> is its classroom.google.com link or the COURSE/WORK pair listed.
-  goog edit, pull, cat and open take an <assignment> too, for your Doc or Slides
-  copy in it. States: not turned in, missing (past due), turned-in, returned.
+  <assignment> is its classroom.google.com link or the COURSE/WORK pair listed;
+  a class material's link or COURSE/m/WORK works too. goog edit, pull, cat and
+  open take an <assignment> too, for your Doc or Slides copy in it. States: not turned in, missing (past due), turned-in, returned.
   Times are this machine's time zone; --json gives due in UTC and dueLocal.
   goog skill [install|remove]   the skill that teaches coding agents (Claude Code,
                                 Codex) to edit docs with goog; status if none given
@@ -677,7 +677,7 @@ function outWork(w: Work, full: boolean, instructions = false) {
   const state = w.type === "material" ? "class material, nothing to turn in"
     : w.missing ? `missing, ${w.daysLate} day${w.daysLate === 1 ? "" : "s"} late` : w.state === "assigned" ? "not turned in" : w.state;
   out(`${w.course} › ${w.title}`);
-  out(`  ${[due, state, w.points ? `${w.points} pts` : "", `id ${w.courseId}/${w.id}`].filter(Boolean).join(" · ")}`);
+  out(`  ${[due, state, w.points ? `${w.points} pts` : "", `id ${refOf(w)}`].filter(Boolean).join(" · ")}`);
   const about = w.description?.trim().replace(/\s+/g, " ");
   if (!full && about) out(instructions ? `  ${w.description!.trim().replace(/\n\s*\n/g, "\n").replace(/\n/g, "\n  ")}` : `  ${about.length > 100 ? `${about.slice(0, 99)}… (--full)` : about}`);
   const unreadable = (a: Attachment) => (a.readable || a.kind === "youtube" || a.kind === "link" ? "" : " (goog can't open it)");
@@ -687,7 +687,7 @@ function outWork(w: Work, full: boolean, instructions = false) {
     const share: Record<string, string> = {"student-copy": " (template: you get your own copy)", edit: " (shared to edit)"};
     for (const a of w.materials) out(`  teacher's ${a.kind}${share[a.share ?? ""] ?? ""}: ${a.title}  ${a.url}${unreadable(a)}`);
     for (const v of w.videos ?? []) out(`  video linked in "${v.in}": ${v.url}`);
-    if (w.videos?.length || w.materials.some((a) => a.kind === "youtube")) out(`  goog transcript ${w.courseId}/${w.id} prints what the videos say`);
+    if (w.videos?.length || w.materials.some((a) => a.kind === "youtube")) out(`  goog transcript ${refOf(w)} prints what the videos say`);
   }
   for (const a of w.yours) {
     const n = (k: number, one: string) => `${k} ${one}${k === 1 ? "" : "s"}`;
@@ -696,7 +696,7 @@ function outWork(w: Work, full: boolean, instructions = false) {
       : a.wordsTotal !== undefined ? `${n(a.wordsTotal, "word")} (no template to compare with, so some may be the teacher's), ` : "";
     out(`  your ${a.kind}: ${progress}${a.title}  ${a.url}${unreadable(a)}`);
   }
-  if (!w.yours.length && !full) {
+  if (!w.yours.length && !full && w.type !== "material") {
     const kinds = new Map<string, number>();
     for (const a of w.materials) kinds.set(a.kind, (kinds.get(a.kind) ?? 0) + 1);
     const noun = (k: string, n: number) => {

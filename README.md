@@ -174,8 +174,9 @@ you've added to the teacher's template.
 `goog classroom <assignment link>` shows one assignment's instructions, the
 teacher's files and yours, with how far along yours are (words, images and
 ticked boxes added to the template) and any YouTube videos the teacher's files
-link to. A class material's link works the same way. `goog edit`, `pull`, `cat` and `open` take an
-assignment link too and open your Doc or Slides copy in it. It's read-only:
+link to. A class material's link works the same way, and so does
+`goog transcript`. `goog edit`, `pull`, `cat` and `open` take an assignment
+link too and open your Doc or Slides copy in it. It's read-only:
 turning work in stays in Classroom.
 
 `goog transcript <youtube link or assignment>` prints what a video says, a line

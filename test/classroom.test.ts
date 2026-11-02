@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
+import {mkdtempSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
 import {test} from "node:test";
-import {addedWords, dueOf, editable, isBlank, isTodo, marks, parseCourseRef, parseWorkRef, videosIn, words, type Attachment, type Work} from "../src/classroom.ts";
+
+const tmp = mkdtempSync(join(tmpdir(), "goog-classroom-test-"));
+process.env.GOOG_CACHE_DIR = join(tmp, "cache");
+process.env.GOOG_CONFIG_DIR = join(tmp, "config");
+process.env.GOOG_TOKEN = "offline-test";
+const {addedWords, dueOf, editable, getWork, isBlank, isTodo, marks, parseCourseRef, parseWorkRef, refOf, videosIn, words} = await import("../src/classroom.ts");
+type Work = import("../src/classroom.ts").Work;
+type Attachment = import("../src/classroom.ts").Attachment;
 
 test("parseWorkRef: Classroom links and courseId/workId", () => {
   const want = {courseId: "793347668502", id: "883088850317"};
@@ -11,6 +21,7 @@ test("parseWorkRef: Classroom links and courseId/workId", () => {
   assert.equal(parseWorkRef("notes.goog"), null);
   assert.throws(() => parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy"), /isn't a Classroom assignment link/);
   assert.deepEqual(parseWorkRef("https://classroom.google.com/c/NzkzMzQ3NjY4NTAy/m/ODgzMDg4ODUwMzE3/details"), {...want, material: true});
+  assert.deepEqual(parseWorkRef("793347668502/m/883088850317"), {...want, material: true});
 });
 
 test("parseCourseRef: a class's link", () => {
@@ -83,4 +94,30 @@ test("videosIn: links and embeds, once each", () => {
   assert.deepEqual(videosIn(text), ["https://youtu.be/j8YfUEzBQ20", "https://youtu.be/abcdefghijk"]);
   const more = `<a href="https://www.youtube.com/watch?feature=shared&amp;v=AAAAAAAAAAA">a</a> youtube.com/shorts/BBBBBBBBBBB https://www.youtube-nocookie.com/embed/CCCCCCCCCCC youtube.com/live/DDDDDDDDDDD https://www.YouTube.com/watch?v=EEEEEEEEEEE https://www.youtube.com/embed/videoseries?list=PLx youtube.com/@channel https://fakeyoutube.com/watch?v=FFFFFFFFFFF (see https://youtu.be/GGGGGGGGGGG).`;
   assert.deepEqual(videosIn(more), ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD", "EEEEEEEEEEE", "GGGGGGGGGGG"].map((id) => `https://youtu.be/${id}`));
+});
+
+test("getWork: a class material comes from courseWorkMaterials, with no submission", async (t) => {
+  const real = globalThis.fetch;
+  t.after(() => (globalThis.fetch = real));
+  const asked: string[] = [];
+  globalThis.fetch = (async (url: any) => {
+    const u = String(url);
+    asked.push(u.replace(/\?.*/, ""));
+    const json = (j: unknown) => new Response(JSON.stringify(j), {status: 200, headers: {"content-type": "application/json"}});
+    if (u.endsWith("/courses/1")) return json({id: "1", name: "Art"});
+    if (u.endsWith("/courses/1/courseWorkMaterials/2")) {
+      return json({id: "2", title: "Shading", creationTime: "2026-10-20T00:00:00Z", alternateLink: "https://classroom.google.com/c/MQ/m/Mg/details",
+        materials: [{youtubeVideo: {title: "How to shade", alternateLink: "https://youtu.be/abcdefghijk"}}]});
+    }
+    if (u.includes("drive/v3/about")) return json({user: {displayName: "Sam"}});
+    throw new Error(`unexpected fetch ${u}`);
+  }) as typeof fetch;
+  const w = await getWork({courseId: "1", id: "2", material: true});
+  assert.equal(w.type, "material");
+  assert.equal(w.course, "Art");
+  assert.deepEqual(w.yours, []);
+  assert.deepEqual(w.materials.map((a) => a.kind), ["youtube"]);
+  assert.equal(refOf(w), "1/m/2");
+  assert.deepEqual(parseWorkRef(refOf(w)), {courseId: "1", id: "2", material: true});
+  assert.ok(!asked.some((u) => /courseWork\/|studentSubmissions/.test(u)), asked.join("\n"));
 });
