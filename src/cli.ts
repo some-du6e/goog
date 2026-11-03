@@ -316,8 +316,8 @@ async function cmdAuth(args: string[], manual = false) {
     return;
   }
   if (sub === "export") {
-    // Only to a new file, never stdout: the refresh token keeps signing in
-    // until it's revoked, and an agent's command output gets logged.
+    // Only to a new file, never stdout: the refresh token signs in as the user
+    // until it expires or is revoked, and an agent's command output gets logged.
     if (!arg || arg === "-") throw new Error("usage: goog auth export <new file>");
     const user = authorizedUser();
     let fd: number;
@@ -329,7 +329,7 @@ async function cmdAuth(args: string[], manual = false) {
     try {
       writeFileSync(fd, JSON.stringify(user, null, 2) + "\n");
     } catch (e) {
-      rmSync(arg, {force: true}); // cut off partway (a full disk), it holds part of the secret
+      rmSync(arg, {force: true}); // a write cut off partway (a full disk) leaves part of the secret
       throw e;
     } finally {
       closeSync(fd);
