@@ -2,7 +2,7 @@ import {spawn} from "node:child_process";
 import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {basename, dirname, join, relative, resolve} from "node:path";
 import {parseArgs} from "node:util";
-import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, forgetToken, getToken, authorizedUser, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
+import {authorizedUser, authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, clientLabel, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
@@ -323,9 +323,11 @@ async function cmdAuth(args: string[], manual = false) {
     try {
       writeFileSync(arg, JSON.stringify(user, null, 2) + "\n", {flag: "wx", mode: 0o600});
     } catch (e: any) {
-      throw new Error(e.code === "EEXIST" ? `${arg} already exists; goog won't overwrite it` : e.message);
+      if (e.code === "EEXIST") throw new Error(`${arg} already exists; goog won't overwrite it`);
+      rmSync(arg, {force: true}); // a write cut off partway (a full disk) leaves part of the secret
+      throw e;
     }
-    out(`goog auth: wrote ${arg}, an authorized_user file for OAuth client ${user.client_id.split("-")[0]}…. It signs in as you until you revoke it at myaccount.google.com/permissions; keep it private.`);
+    out(`goog auth: wrote ${arg}, an authorized_user file for OAuth client ${clientLabel(user.client_id)}. It signs in as you until the refresh token expires or is revoked; keep it private.`);
     return;
   }
   // The checks below test the new sign-in, which $GOOG_TOKEN would stand in for.

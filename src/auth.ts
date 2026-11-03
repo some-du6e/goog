@@ -89,16 +89,11 @@ export async function getToken(): Promise<string> {
 
 async function fetchToken(): Promise<Cached> {
   const cfg = loadConfig();
-  const saved = readJson<{refresh_token?: string} | null>(refreshPath, null);
-  if (cfg.client && saved?.refresh_token) {
+  const signIn = clientSignIn();
+  if (signIn) {
     const r = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
-      body: new URLSearchParams({
-        client_id: cfg.client.client_id,
-        client_secret: cfg.client.client_secret,
-        refresh_token: saved.refresh_token,
-        grant_type: "refresh_token",
-      }),
+      body: new URLSearchParams({...signIn, grant_type: "refresh_token"}),
     });
     const j: any = await r.json();
     if (!r.ok) throw new Error(`refreshing the OAuth token failed: ${j.error_description ?? j.error}; run goog auth client again`);
@@ -207,12 +202,22 @@ async function lifetime(token: string): Promise<number> {
   return 30 * 60_000;
 }
 
-export function authStatus(): string {
-  const cfg = loadConfig();
+// A sign-in from goog auth client or goog auth import: the client and the
+// refresh token it was given. fetchToken prefers it to a broker.
+function clientSignIn(): {client_id: string; client_secret: string; refresh_token: string} | null {
+  const client = loadConfig().client;
   const saved = readJson<{refresh_token?: string} | null>(refreshPath, null);
+  return client && saved?.refresh_token ? {...client, refresh_token: saved.refresh_token} : null;
+}
+
+// Enough of a client id to tell clients apart, without the whole id.
+export const clientLabel = (id: string) => `${id.split("-")[0]}…`;
+
+export function authStatus(): string {
+  const signIn = clientSignIn();
   if (process.env.GOOG_TOKEN) return "using $GOOG_TOKEN";
-  if (cfg.client && saved?.refresh_token) return `using your OAuth client ${cfg.client.client_id.split("-")[0]}…`;
-  if (cfg.broker) return "using the Apps Script broker";
+  if (signIn) return `using your OAuth client ${clientLabel(signIn.client_id)}`;
+  if (loadConfig().broker) return "using the Apps Script broker";
   return "not set up";
 }
 
@@ -233,12 +238,11 @@ export function importAuthorizedUser(j: any): {client_id: string; client_secret:
 // google-auth "authorized_user" file, for other tools to sign in with. A
 // broker has neither (its client is the script's hidden Cloud project).
 export function authorizedUser() {
-  const client = loadConfig().client;
-  const saved = readJson<{refresh_token?: string} | null>(refreshPath, null);
-  if (!client || !saved?.refresh_token) {
-    throw new Error("only a sign-in with goog auth client or goog auth import can be exported; the Apps Script broker never hands out a client secret or refresh token");
-  }
-  return {type: "authorized_user", ...client, refresh_token: saved.refresh_token};
+  const signIn = clientSignIn();
+  if (signIn) return {type: "authorized_user", ...signIn};
+  throw new Error(loadConfig().broker
+    ? "goog is signed in through the Apps Script broker, which never hands out a client secret or refresh token; only a goog auth client or goog auth import sign-in can be exported"
+    : "nothing to export: only a goog auth client or goog auth import sign-in has a client secret and refresh token");
 }
 
 // Returns a function that puts back the refresh token saved now (or its

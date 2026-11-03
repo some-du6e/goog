@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {mkdtempSync} from "node:fs";
+import {mkdtempSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
@@ -162,7 +162,9 @@ test("an imported sign-in exports as the same authorized_user file, and a broker
   const file = {type: "authorized_user", client_id: "c", client_secret: "s", refresh_token: "r"};
   saveConfig({client: importAuthorizedUser(file)});
   assert.deepEqual(authorizedUser(), file);
-  saveConfig({broker: BROKER});
-  importAuthorizedUser(file); // a refresh token left over, but no client
-  assert.throws(() => authorizedUser(), /broker never hands out/);
+  saveConfig({broker: BROKER}); // the refresh token left over, but no client
+  assert.throws(() => authorizedUser(), /signed in through the Apps Script broker/);
+  saveConfig({client: {client_id: "c", client_secret: "s"}});
+  rmSync(join(tmp, "config", "oauth.json"));
+  assert.throws(() => authorizedUser(), /nothing to export/);
 });
