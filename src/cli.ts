@@ -316,16 +316,23 @@ async function cmdAuth(args: string[], manual = false) {
     return;
   }
   if (sub === "export") {
-    // Only to a new file, never stdout: the refresh token is a lasting key,
-    // and an agent's command output gets logged.
+    // Only to a new file, never stdout: the refresh token keeps signing in
+    // until it's revoked, and an agent's command output gets logged.
     if (!arg || arg === "-") throw new Error("usage: goog auth export <new file>");
     const user = authorizedUser();
+    let fd: number;
     try {
-      writeFileSync(arg, JSON.stringify(user, null, 2) + "\n", {flag: "wx", mode: 0o600});
+      fd = openSync(arg, "wx", 0o600);
     } catch (e: any) {
-      if (e.code === "EEXIST") throw new Error(`${arg} already exists; goog won't overwrite it`);
-      rmSync(arg, {force: true}); // a write cut off partway (a full disk) leaves part of the secret
+      throw e.code === "EEXIST" ? new Error(`${arg} already exists; goog won't overwrite it`) : e;
+    }
+    try {
+      writeFileSync(fd, JSON.stringify(user, null, 2) + "\n");
+    } catch (e) {
+      rmSync(arg, {force: true}); // cut off partway (a full disk), it holds part of the secret
       throw e;
+    } finally {
+      closeSync(fd);
     }
     out(`goog auth: wrote ${arg}, an authorized_user file for OAuth client ${clientLabel(user.client_id)}. It signs in as you until the refresh token expires or is revoked; keep it private.`);
     return;
