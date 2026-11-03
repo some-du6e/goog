@@ -12,7 +12,7 @@ const tmp = mkdtempSync(join(tmpdir(), "goog-auth-test-"));
 process.env.GOOG_CACHE_DIR = join(tmp, "cache");
 process.env.GOOG_CONFIG_DIR = join(tmp, "config");
 delete process.env.GOOG_TOKEN; // it would stand in for every sign-in tested here
-const {authStatus, BROKER_SOURCE, forgetToken, getToken, loginWithClient} = await import("../src/auth.ts");
+const {authorizedUser, authStatus, BROKER_SOURCE, forgetToken, getToken, importAuthorizedUser, loginWithClient} = await import("../src/auth.ts");
 const {saveConfig} = await import("../src/config.ts");
 
 test("sign-in ignores replies without its state, and sends the PKCE verifier", {timeout: 10_000}, async () => {
@@ -156,4 +156,13 @@ test("not signed in, the error tells the agent to run goog auth script", async (
   saveConfig({});
   forgetToken();
   await assert.rejects(getToken(), /Run `goog auth script` and show the user the steps/);
+});
+
+test("an imported sign-in exports as the same authorized_user file, and a broker's doesn't", () => {
+  const file = {type: "authorized_user", client_id: "c", client_secret: "s", refresh_token: "r"};
+  saveConfig({client: importAuthorizedUser(file)});
+  assert.deepEqual(authorizedUser(), file);
+  saveConfig({broker: BROKER});
+  importAuthorizedUser(file); // a refresh token left over, but no client
+  assert.throws(() => authorizedUser(), /broker never hands out/);
 });

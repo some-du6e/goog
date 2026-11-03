@@ -1,8 +1,8 @@
 import {spawn} from "node:child_process";
-import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync} from "node:fs";
+import {closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {basename, dirname, join, relative, resolve} from "node:path";
 import {parseArgs} from "node:util";
-import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
+import {authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, forgetToken, getToken, authorizedUser, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
 import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
@@ -75,7 +75,7 @@ Drive
   goog ls [query]               recent docs and slides
   goog new <title> [--slides]   create a doc (or a deck) and print its id
   goog open <doc>               print the doc's URL
-  goog auth [status|script [URL|FILE|-|--manual]|import <token.json>|client <client_secret.json>]
+  goog auth [status|script [URL|FILE|-|--manual]|import <token.json>|client <client_secret.json>|export <file>]
 
 Any API call
   goog api <path>               call a Google API with goog's sign-in and print the JSON
@@ -315,6 +315,19 @@ async function cmdAuth(args: string[], manual = false) {
     }
     return;
   }
+  if (sub === "export") {
+    // Only to a new file, never stdout: the refresh token is a lasting key,
+    // and an agent's command output gets logged.
+    if (!arg || arg === "-") throw new Error("usage: goog auth export <new file>");
+    const user = authorizedUser();
+    try {
+      writeFileSync(arg, JSON.stringify(user, null, 2) + "\n", {flag: "wx", mode: 0o600});
+    } catch (e: any) {
+      throw new Error(e.code === "EEXIST" ? `${arg} already exists; goog won't overwrite it` : e.message);
+    }
+    out(`goog auth: wrote ${arg}, an authorized_user file for OAuth client ${user.client_id.split("-")[0]}…. It signs in as you until you revoke it at myaccount.google.com/permissions; keep it private.`);
+    return;
+  }
   // The checks below test the new sign-in, which $GOOG_TOKEN would stand in for.
   delete process.env.GOOG_TOKEN;
   // A file that isn't JSON may be a token; JSON.parse's error would quote it.
@@ -450,7 +463,7 @@ No template: goog auth script --manual.`);
     out("goog auth: OK");
     return;
   }
-  throw new Error("unknown auth command; it's status, script, import or client"); // not quoting it: it may be a secret
+  throw new Error("unknown auth command; it's status, script, import, client or export"); // not quoting it: it may be a secret
 }
 
 

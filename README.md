@@ -272,6 +272,13 @@ you fix them.
 - `goog auth client client_secret.json`: a normal Desktop OAuth client. It
   asks for the same scopes as the script.
 
+`goog auth export <file>` writes the client and refresh token from
+`goog auth client` or `goog auth import` to a new `authorized_user` file, the
+kind google-auth libraries and `goog auth import` read. It works as a lasting
+key to your account until you remove the app at
+myaccount.google.com/permissions. A broker sign-in can't be exported, since
+the script never hands out a client secret or refresh token.
+
 Config is in `~/.config/goog/`. Sync records, watcher state, and logs are in
 `~/.cache/goog/`. `GOOG_CONFIG_DIR` and `GOOG_CACHE_DIR` override both.
 

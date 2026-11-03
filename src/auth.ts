@@ -229,6 +229,18 @@ export function importAuthorizedUser(j: any): {client_id: string; client_secret:
   return {client_id: j.client_id, client_secret: j.client_secret};
 }
 
+// The reverse of importAuthorizedUser: the client and refresh token as a
+// google-auth "authorized_user" file, for other tools to sign in with. A
+// broker has neither (its client is the script's hidden Cloud project).
+export function authorizedUser() {
+  const client = loadConfig().client;
+  const saved = readJson<{refresh_token?: string} | null>(refreshPath, null);
+  if (!client || !saved?.refresh_token) {
+    throw new Error("only a sign-in with goog auth client or goog auth import can be exported; the Apps Script broker never hands out a client secret or refresh token");
+  }
+  return {type: "authorized_user", ...client, refresh_token: saved.refresh_token};
+}
+
 // Returns a function that puts back the refresh token saved now (or its
 // absence), for undoing a sign-in that doesn't work.
 export function keepSignIn(): () => void {
