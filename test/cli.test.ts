@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import {execFileSync, spawnSync} from "node:child_process";
-import {existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync} from "node:fs";
+import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {test} from "node:test";
@@ -192,6 +192,38 @@ test("auth script: prints the template steps, or the script with --manual", () =
   assert.match(manual.stdout, /function doPost\(\)/);
   assert.match(manual.stdout, /"access": "ANYONE_ANONYMOUS"/);
   assert.doesNotMatch(manual.stdout, /copy#/);
+});
+
+test("auth export: writes the sign-in to a new private file, and nowhere else", () => {
+  // Its own config dir: the auth script test checks the shared one stays empty.
+  const config = join(tmp, "export-config");
+  mkdirSync(config);
+  const client = {client_id: "123-x.apps.googleusercontent.com", client_secret: "SECRETs"};
+  writeFileSync(join(config, "config.json"), JSON.stringify({client}));
+  writeFileSync(join(config, "oauth.json"), JSON.stringify({refresh_token: "SECRETr"}));
+  const run = (...args: string[]) => spawnSync(process.execPath, [bin, "auth", "export", ...args], {cwd: tmp, env: {...env, GOOG_CONFIG_DIR: config}, encoding: "utf8"});
+  const ok = run("signin.json");
+  assert.equal(ok.status, 0);
+  assert.doesNotMatch(ok.stdout + ok.stderr, /SECRET/);
+  const file = join(tmp, "signin.json");
+  const written = readFileSync(file, "utf8");
+  assert.deepEqual(JSON.parse(written), {type: "authorized_user", ...client, refresh_token: "SECRETr"});
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  const again = run("signin.json");
+  assert.equal(again.status, 1);
+  assert.match(again.stderr, /already exists/);
+  assert.equal(readFileSync(file, "utf8"), written);
+  for (const r of [run(), run("-")]) {
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /usage: goog auth export/);
+  }
+  assert.equal(existsSync(join(tmp, "-")), false);
+  writeFileSync(join(config, "config.json"), JSON.stringify({broker: "https://script.google.com/macros/s/AKfycbSECRET/exec"}));
+  const broker = run("broker.json");
+  assert.equal(broker.status, 1);
+  assert.match(broker.stderr, /signed in through the Apps Script broker/);
+  assert.doesNotMatch(broker.stderr, /SECRET/);
+  assert.equal(existsSync(join(tmp, "broker.json")), false);
 });
 
 test("auth script: refuses what isn't an /exec URL without quoting it or saving anything", () => {
