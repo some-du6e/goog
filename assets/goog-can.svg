@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="24" viewBox="0 0 220 24">
+<style>
+text{font:600 16px -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;fill:#1f2328}
+@media (prefers-color-scheme:dark){text{fill:#f0f6fc}}
+g{animation:t 14.0s cubic-bezier(.5,0,.2,1.4) infinite}
+@keyframes t{0.00%,12.14%{transform:translateY(0px)}14.29%,26.43%{transform:translateY(-24px)}28.57%,40.71%{transform:translateY(-48px)}42.86%,55.00%{transform:translateY(-72px)}57.14%,69.29%{transform:translateY(-96px)}71.43%,83.57%{transform:translateY(-120px)}85.71%,97.86%{transform:translateY(-144px)}100%{transform:translateY(-168px)}}
+</style>
+<g><text x="0" y="17">edits your docs</text><text x="0" y="41">makes slides</text><text x="0" y="65">syncs live</text><text x="0" y="89">reads classroom</text><text x="0" y="113">grabs youtube transcripts</text><text x="0" y="137">types like a human</text><text x="0" y="161">calls any google api</text><text x="0" y="185">edits your docs</text></g>
+</svg>
