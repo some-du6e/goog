@@ -237,7 +237,7 @@ test("a mid-pass kill saves the partial typing as the base, so the next push res
 test("a typed push after a MERGE keeps onWrote/onSignal off — so a mid-pass stop can conflict", async () => {
   // onWrote/onSignal are deliberately off when the push merged doc edits in
   // (the file lacks them until the end), so a mid-pass stop leaves the base
-  // stale and a retry can conflict instead of resuming. README/SKILL.md
+  // stale and a retry can conflict instead of resuming. readmeforagents.md/SKILL.md
   // qualify the resume promise with exactly this; pin the wiring.
   const f = fileIn("typed-merge.goog");
   const remote = fakeDoc(doc("Q1?", "Q2?", "Q3?"));

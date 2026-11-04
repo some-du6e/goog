@@ -1,5 +1,5 @@
 // Reads and writes the .goog text format. One paragraph per line, HTML-ish tags
-// for formatting. See README.md and `goog help format` for the syntax.
+// for formatting. See readmeforagents.md and `goog help format` for the syntax.
 
 import {
   type Align, type Atom, type Block, type CellInfo, type Doc, type ListInfo, type Para, type ParaStyle, type Run,
