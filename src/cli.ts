@@ -5,7 +5,7 @@ import {parseArgs} from "node:util";
 import {authorizedUser, authStatus, BROKER_MANIFEST, BROKER_SOURCE, BROKER_TEMPLATE, clientLabel, forgetToken, getToken, importAuthorizedUser, keepSignIn, loginWithClient} from "./auth.ts";
 import {withBrowser} from "./browser.ts";
 import {loadConfig, saveConfig} from "./config.ts";
-import {installSkill, removeSkill, skillMissing, skillStatus} from "./skill.ts";
+import {SKILL_INSTALL, skillMissing} from "./skill.ts";
 import {backendOfText, backends, kindOf} from "./backend.ts";
 import {FormatError} from "./format.ts";
 import {courses, editable, getWork, isBlank, isDone, isTodo, listWork, measure, parseCourseRef, parseWorkRef, refOf, type Attachment, type Work} from "./classroom.ts";
@@ -131,13 +131,10 @@ Classroom
   open take an <assignment> too, for your Doc or Slides copy in it. States: not
   turned in, missing (past due), turned-in, returned.
   Times are this machine's time zone; --json gives due in UTC and dueLocal.
-  goog skill [install|remove]   the skill that teaches coding agents (Claude Code,
-                                Codex) to edit docs with goog; status if none given
-      --force                   install over another goog skill (another copy's, or hand-made)
 
 <doc> is a doc or deck id, a docs.google.com or drive.google.com URL, or a .goog file.
 --json gives machine-readable output on status, wait, push, pull, diff, check,
-pics, ls, new, stop, skill, classroom, transcript, edit (one event per line), log,
+pics, ls, new, stop, classroom, transcript, edit (one event per line), log,
 and errors ({"ok":false,"error":…}). A deck's pull and push say "drawing":true
 while the slide pictures are drawn (false if the draw couldn't start), as does
 edit --bg while a draw runs; goog pics --json lists them once they're done.
@@ -266,32 +263,7 @@ Changing a deck
 // skill. It's usually an agent, and installing changes the user's agent
 // setup, so the agent asks first.
 const SKILL_HINT = `Agents: goog has a skill that makes editing docs faster for you. Ask the
-user whether to install it; if they say yes, run \`goog skill install\`.`;
-
-function cmdSkill(sub: string | undefined, force: boolean, asJson: boolean) {
-  if (sub === "install") {
-    const r = installSkill(force);
-    if (asJson) return json({ok: true, agents: r});
-    if (!r.length) return out("no coding agents found (looked for ~/.claude and ~/.codex)");
-    for (const a of r) {
-      out(a.done ? `installed for ${a.agent}: ${a.dir}`
-        : a.state === "installed" ? `already installed for ${a.agent}`
-        : `${a.dir} is another goog skill (another copy's, or hand-made); goog skill install --force replaces it`);
-    }
-    return;
-  }
-  if (sub === "remove") {
-    const r = removeSkill();
-    if (asJson) return json({ok: true, agents: r});
-    for (const a of r) out(a.done ? `removed from ${a.agent}` : a.state === "other" ? `${a.dir} isn't this goog's skill; left alone` : `not installed for ${a.agent}`);
-    return;
-  }
-  if (sub && sub !== "status") throw new Error(`unknown goog skill command "${sub}"; use install, remove, or nothing for status`);
-  const st = skillStatus();
-  if (asJson) return json({ok: true, agents: st});
-  if (!st.length) return out("no coding agents found (looked for ~/.claude and ~/.codex)");
-  for (const a of st) out(`${a.agent}: ${a.state === "installed" ? "installed" : a.state === "missing" ? "not installed (goog skill install)" : `${a.dir} is another goog skill (another copy's, or hand-made)`}`);
-}
+user whether to install it; if they say yes, run \`${SKILL_INSTALL}\`.`;
 
 function out(s: string) {
   process.stdout.write(s.endsWith("\n") ? s : s + "\n");
@@ -906,8 +878,6 @@ export async function main(argv: string[]) {
       out(HELP);
       if (skillMissing()) out(`\n${SKILL_HINT}`);
       return;
-    case "skill":
-      return cmdSkill(pos[0], !!flags.force, asJson);
     case "auth":
       return cmdAuth(pos, !!flags.manual);
     case "edit": {

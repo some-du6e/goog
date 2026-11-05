@@ -1,65 +1,23 @@
-// Installs goog's agent skill (skill/SKILL.md) for the coding agents on this
-// machine. With it, an agent asked to edit a doc knows the pull/edit/push
-// steps and the format up front instead of reading `goog help` first.
-//
-// The skill is a symlink to this package's skill/ directory, so it updates
-// along with goog.
+// goog's agent skill (skill/SKILL.md) is installed with Vercel's skills CLI
+// (`npx skills add some-du6e/goog`), which copies it from GitHub into each
+// agent's skill directory. With it, an agent asked to edit a doc knows the
+// pull/edit/push steps and the format up front instead of reading `goog help`
+// first. goog only checks whether it's there, to hint at it.
 
-import {existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync} from "node:fs";
+import {existsSync} from "node:fs";
 import {homedir} from "node:os";
-import {join, resolve} from "node:path";
-import {fileURLToPath} from "node:url";
+import {join} from "node:path";
 
-const SOURCE = fileURLToPath(new URL("../skill", import.meta.url));
+// Without -a, -y only picks the agent running it and the "universal" ones
+// (Codex, not Claude Code).
+export const SKILL_INSTALL = "npx skills add some-du6e/goog -g -a claude-code -a codex -y";
 
-// Skill directories of the agents that are set up here (their config dir exists).
-function agentDirs(): {agent: string; dir: string}[] {
-  const home = process.env.GOOG_AGENT_HOME || homedir();
-  return [
-    {agent: "Claude Code", root: join(home, ".claude")},
-    {agent: "Codex", root: join(home, ".codex")},
-  ]
-    .filter((a) => existsSync(a.root))
-    .map((a) => ({agent: a.agent, dir: join(a.root, "skills", "goog")}));
-}
-
-export type SkillState = "installed" | "missing" | "other"; // other: a skill this goog didn't link, such as another goog copy's or a hand-made one
-
-// A link left dangling (that goog was uninstalled, or the Node version it was
-// installed under was removed) counts as missing, so install replaces it and
-// remove clears it.
-function stateOf(dir: string): SkillState {
-  const st = lstatSync(dir, {throwIfNoEntry: false});
-  if (!st) return "missing";
-  if (st.isSymbolicLink() && resolve(join(dir, ".."), readlinkSync(dir)) === SOURCE) return "installed";
-  return dangling(dir) ? "missing" : "other";
-}
-
-const dangling = (dir: string) => !!lstatSync(dir, {throwIfNoEntry: false})?.isSymbolicLink() && !existsSync(dir);
-
-export function skillStatus(): {agent: string; dir: string; state: SkillState}[] {
-  return agentDirs().map((a) => ({...a, state: stateOf(a.dir)}));
-}
-
-// True when some agent here could use the skill but doesn't have one.
+// True when a coding agent is set up here (its config dir exists) but has no
+// goog skill where it looks: Claude Code only reads its own skills/, Codex
+// also reads the shared ~/.agents/skills the skills CLI installs to.
 export function skillMissing(): boolean {
-  return skillStatus().some((s) => s.state === "missing");
-}
-
-export function installSkill(force = false): {agent: string; dir: string; state: SkillState; done: boolean}[] {
-  return skillStatus().map((s) => {
-    if (s.state === "installed" || (s.state === "other" && !force)) return {...s, done: false};
-    rmSync(s.dir, {recursive: true, force: true});
-    mkdirSync(join(s.dir, ".."), {recursive: true});
-    symlinkSync(SOURCE, s.dir);
-    return {...s, state: "installed", done: true};
-  });
-}
-
-export function removeSkill(): {agent: string; dir: string; state: SkillState; done: boolean}[] {
-  return skillStatus().map((s) => {
-    if (s.state !== "installed" && !dangling(s.dir)) return {...s, done: false};
-    rmSync(s.dir);
-    return {...s, done: true};
-  });
+  const home = process.env.GOOG_AGENT_HOME || homedir();
+  const has = (...dirs: string[]) => dirs.some((d) => existsSync(join(home, d, "skills", "goog", "SKILL.md")));
+  return (existsSync(join(home, ".claude")) && !has(".claude"))
+    || (existsSync(join(home, ".codex")) && !has(".codex", ".agents"));
 }

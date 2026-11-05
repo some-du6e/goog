@@ -3,9 +3,9 @@
 
 import assert from "node:assert/strict";
 import {execFileSync, spawnSync} from "node:child_process";
-import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync} from "node:fs";
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
-import {dirname, join, resolve} from "node:path";
+import {join} from "node:path";
 import {test} from "node:test";
 
 const tmp = mkdtempSync(join(tmpdir(), "goog-cli-test-"));
@@ -102,46 +102,26 @@ test("push --type refuses decks, a watching goog edit, and a bad --wpm", () => {
   assert.match(bad.stderr, /--wpm/);
 });
 
-test("skill: hint until installed, then a symlink per agent", () => {
+test("skill: plain goog hints at the skills CLI until a goog skill is installed", () => {
   const home = join(tmp, "home");
+  assert.doesNotMatch(goog("help").stdout, /skills add/); // no agents set up here
   mkdirSync(join(home, ".claude"), {recursive: true});
-  assert.match(goog("help").stdout, /goog skill install/);
-  assert.match(goog("skill").stdout, /Claude Code: not installed/);
-  assert.match(goog("skill", "install").stdout, /installed for Claude Code/);
-  assert.equal(readlinkSync(join(home, ".claude/skills/goog")), resolve(dirname(bin), "../skill"));
-  assert.ok(existsSync(join(home, ".claude/skills/goog/SKILL.md")));
-  assert.equal(existsSync(join(home, ".codex")), false); // agents that aren't set up are left alone
-  assert.doesNotMatch(goog("help").stdout, /goog skill install/);
-  assert.match(goog("skill", "remove").stdout, /removed from Claude Code/);
-  assert.equal(existsSync(join(home, ".claude/skills/goog")), false);
-});
-
-test("skill: a dangling link is replaced and removed; anyone else's link is left alone", () => {
-  const home = join(tmp, "home");
-  const link = join(home, ".claude/skills/goog");
-  mkdirSync(join(home, ".claude/skills"), {recursive: true});
-  rmSync(link, {force: true});
-  symlinkSync(join(tmp, "gone"), link);
-  assert.match(goog("help").stdout, /goog skill install/);
-  assert.match(goog("skill", "install").stdout, /installed for Claude Code/);
-  assert.equal(readlinkSync(link), resolve(dirname(bin), "../skill"));
-  rmSync(link);
-  symlinkSync(join(tmp, "gone"), link);
-  assert.match(goog("skill", "remove").stdout, /removed from Claude Code/);
-  assert.equal(lstatSync(link, {throwIfNoEntry: false}), undefined);
-  // Another goog's skill, or a hand-made one: only --force replaces it.
-  const theirs = join(tmp, "their-skill");
-  mkdirSync(theirs, {recursive: true});
-  writeFileSync(join(theirs, "SKILL.md"), "---\nname: goog\n---\n");
-  symlinkSync(theirs, link);
-  assert.doesNotMatch(goog("help").stdout, /goog skill install/);
-  assert.match(goog("skill", "install").stdout, /another goog skill.*--force replaces it/);
-  assert.equal(readlinkSync(link), theirs);
-  assert.match(goog("skill", "remove").stdout, /left alone/);
-  assert.equal(readlinkSync(link), theirs);
-  assert.match(goog("skill", "install", "--force").stdout, /installed for Claude Code/);
-  assert.equal(readlinkSync(link), resolve(dirname(bin), "../skill"));
-  rmSync(link);
+  assert.match(goog("help").stdout, /npx skills add some-du6e\/goog/);
+  assert.match(goog().stdout, /npx skills add some-du6e\/goog/);
+  const skill = (dir: string) => {
+    mkdirSync(join(home, dir, "skills/goog"), {recursive: true});
+    writeFileSync(join(home, dir, "skills/goog/SKILL.md"), "---\nname: goog\n---\n");
+  };
+  // Claude Code doesn't read the shared ~/.agents/skills; Codex does.
+  skill(".agents");
+  assert.match(goog("help").stdout, /skills add/);
+  skill(".claude");
+  assert.doesNotMatch(goog("help").stdout, /skills add/);
+  mkdirSync(join(home, ".codex"));
+  assert.doesNotMatch(goog("help").stdout, /skills add/);
+  rmSync(join(home, ".agents"), {recursive: true});
+  assert.match(goog("help").stdout, /skills add/);
+  rmSync(home, {recursive: true});
 });
 
 test("wait: --timeout takes seconds or minutes, and refuses anything else", () => {
