@@ -107,14 +107,20 @@ test("skill: plain goog hints at the skills CLI until a goog skill is installed"
   assert.doesNotMatch(goog("help").stdout, /skills add/); // no agents set up here
   mkdirSync(join(home, ".claude"), {recursive: true});
   assert.match(goog("help").stdout, /npx skills add some-du6e\/goog/);
-  // The skills CLI puts it in ~/.agents/skills and links agents' own dirs to it.
-  mkdirSync(join(home, ".agents/skills/goog"), {recursive: true});
-  writeFileSync(join(home, ".agents/skills/goog/SKILL.md"), "---\nname: goog\n---\n");
+  assert.match(goog().stdout, /npx skills add some-du6e\/goog/);
+  const skill = (dir: string) => {
+    mkdirSync(join(home, dir, "skills/goog"), {recursive: true});
+    writeFileSync(join(home, dir, "skills/goog/SKILL.md"), "---\nname: goog\n---\n");
+  };
+  // Claude Code doesn't read the shared ~/.agents/skills; Codex does.
+  skill(".agents");
+  assert.match(goog("help").stdout, /skills add/);
+  skill(".claude");
+  assert.doesNotMatch(goog("help").stdout, /skills add/);
+  mkdirSync(join(home, ".codex"));
   assert.doesNotMatch(goog("help").stdout, /skills add/);
   rmSync(join(home, ".agents"), {recursive: true});
-  mkdirSync(join(home, ".claude/skills/goog"), {recursive: true});
-  writeFileSync(join(home, ".claude/skills/goog/SKILL.md"), "---\nname: goog\n---\n");
-  assert.doesNotMatch(goog("help").stdout, /skills add/);
+  assert.match(goog("help").stdout, /skills add/);
   rmSync(home, {recursive: true});
 });
 

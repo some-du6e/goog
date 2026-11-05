@@ -25,8 +25,8 @@ format can't do, Classroom, raw API calls, auth.
    - `goog auth client client_secret.json`: they have their own Desktop
      OAuth client.
 3. `goog auth status` should say who's signed in. Never print the token.
-4. Recommended: `npx skills add some-du6e/goog -g -y` (Vercel's skills CLI)
-   gives Claude Code, Codex and other agents the
+4. Recommended: `npx skills add some-du6e/goog -g -a claude-code -a codex -y`
+   (Vercel's skills CLI; add `-a` for any other agent they use) gives the agents the
    pull/edit/push steps and the format up front, so they don't have to dig
    through `goog help` first (about 15s faster per doc in testing). It's
    optional; goog works without it.
@@ -63,7 +63,7 @@ goog help                  # everything else
   counts.
 - Exit codes: 0 ok, 1 error, 2 conflict, 3 timed out. `--json` works on
   `status`, `wait`, `push`, `pull`, `diff`, `check`, `pics`, `ls`, `new`, `stop`,
-  `skill`, `classroom`, `transcript`, `log` and `edit`. With `--json`, errors are printed as
+  `classroom`, `transcript`, `log` and `edit`. With `--json`, errors are printed as
   `{"ok":false,"error":…}`. A deck's `pull` and `push` say `"drawing":true` while the
   slide pictures are drawn (`false` if the draw couldn't start), as does `edit --bg`
   while a draw runs.
@@ -82,8 +82,8 @@ goog help                  # everything else
 
 - goog's skill gives agents the pull/edit/push steps and the format, so they
   skip reading `goog help` (about 15s faster per doc in testing). Install it
-  with `npx skills add some-du6e/goog -g -y`, and update it with
-  `npx skills update`. Plain `goog` asks agents to offer it.
+  with `npx skills add some-du6e/goog -g -a claude-code -a codex -y`, and
+  update it with `npx skills update goog -g`. Plain `goog` asks agents to offer it.
 
 ### Sync rules
 

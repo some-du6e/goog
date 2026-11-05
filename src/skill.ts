@@ -8,14 +8,16 @@ import {existsSync} from "node:fs";
 import {homedir} from "node:os";
 import {join} from "node:path";
 
-export const SKILL_INSTALL = "npx skills add some-du6e/goog -g -y";
+// Without -a, -y only picks the agent running it and the "universal" ones
+// (Codex, not Claude Code).
+export const SKILL_INSTALL = "npx skills add some-du6e/goog -g -a claude-code -a codex -y";
 
-// True when a coding agent is set up here (its config dir exists) but no goog
-// skill is where agents look: their own skills/ or the shared ~/.agents/skills
-// the skills CLI installs to.
+// True when a coding agent is set up here (its config dir exists) but has no
+// goog skill where it looks: Claude Code only reads its own skills/, Codex
+// also reads the shared ~/.agents/skills the skills CLI installs to.
 export function skillMissing(): boolean {
   const home = process.env.GOOG_AGENT_HOME || homedir();
-  const agents = [".claude", ".codex"].map((d) => join(home, d)).filter((d) => existsSync(d));
-  if (!agents.length) return false;
-  return ![...agents, join(home, ".agents")].some((d) => existsSync(join(d, "skills", "goog", "SKILL.md")));
+  const has = (...dirs: string[]) => dirs.some((d) => existsSync(join(home, d, "skills", "goog", "SKILL.md")));
+  return (existsSync(join(home, ".claude")) && !has(".claude"))
+    || (existsSync(join(home, ".codex")) && !has(".codex", ".agents"));
 }
