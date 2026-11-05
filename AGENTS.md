@@ -4,13 +4,14 @@ goog edits Google Docs and Slides as `.goog` text files through their APIs. `goo
 PATH is a link to this checkout's bin/goog.ts, so it always runs the code
 here. The npm package (goog-cli) is the same code compiled to dist/, since
 Node won't strip types under node_modules; a path a module finds from
-`import.meta.url` has to work from both: `BIN` in slides.ts picks .ts or .js,
-and skill/ is copied to dist/skill by `npm run build` for `SOURCE` in
-skill.ts. test/package.sh, run in CI, checks the installed package. README.md is
+`import.meta.url` has to work from both: `BIN` in slides.ts picks .ts or .js.
+test/package.sh, run in CI, checks the installed package. README.md is
 the user's to write by hand; leave it alone. readmeforagents.md is the
 full user-facing guide. `goog help`, `goog help format`, `goog help slides` (HELP, FORMAT_HELP and
 SLIDES_HELP in src/cli.ts), and the
-agent skill in skill/SKILL.md (installed by `goog skill install`) are what
+agent skill in skill/SKILL.md (installed from GitHub's main branch by Vercel's
+skills CLI, `npx skills add some-du6e/goog`, so it reaches users on merge, not
+on an npm release) are what
 agents using goog read, so a change to a command or the format updates them and
 readmeforagents.md's format section in the same edit.
 

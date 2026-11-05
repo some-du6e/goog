@@ -25,7 +25,8 @@ format can't do, Classroom, raw API calls, auth.
    - `goog auth client client_secret.json`: they have their own Desktop
      OAuth client.
 3. `goog auth status` should say who's signed in. Never print the token.
-4. Recommended: `goog skill install` gives Claude Code and Codex the
+4. Recommended: `npx skills add some-du6e/goog -g -y` (Vercel's skills CLI)
+   gives Claude Code, Codex and other agents the
    pull/edit/push steps and the format up front, so they don't have to dig
    through `goog help` first (about 15s faster per doc in testing). It's
    optional; goog works without it.
@@ -79,9 +80,10 @@ goog help                  # everything else
   sync; then a stop can still leave a conflict to resolve. Docs allows about
   60 writes a minute, which sets the pace.
 
-- `goog skill install` gives Claude Code and Codex a skill with the
-  pull/edit/push steps and the format, so they skip reading `goog help`
-  (about 15s faster per doc in testing). Plain `goog` asks agents to offer it.
+- goog's skill gives agents the pull/edit/push steps and the format, so they
+  skip reading `goog help` (about 15s faster per doc in testing). Install it
+  with `npx skills add some-du6e/goog -g -y`, and update it with
+  `npx skills update`. Plain `goog` asks agents to offer it.
 
 ### Sync rules
 
